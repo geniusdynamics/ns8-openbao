@@ -1,0 +1,30 @@
+#
+# Copyright (C) 2022 Nethesis S.r.l.
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+[Unit]
+Description=Podman  openbao-app.service
+BindsTo=openbao.service
+After=openbao.service
+
+[Service]
+Environment=PODMAN_SYSTEMD_UNIT=%n
+EnvironmentFile=%S/state/environment
+EnvironmentFile=-%S/state/smarthost.env
+WorkingDirectory=%S/state
+Restart=always
+TimeoutStopSec=70
+ExecStartPre=/bin/mkdir -p tmp
+ExecStartPre=/bin/rm -f %t/openbao-app.pid %t/openbao-app.ctr-id
+ExecStartPre=-runagent discover-smarthost
+ExecStart=/usr/bin/podman run --conmon-pidfile %t/openbao-app.pid  --cidfile %t/openbao-app.ctr-id --cgroups=no-conmon  --pod-id-file %t/openbao.pod-id --replace -d --name  openbao-app  --volume openbaoconfig:/openbao/config:Z   --env-file openbao.env  ${OPENBAO_IMAGE}  
+ExecStop=/usr/bin/podman stop --ignore --cidfile %t/openbao-app.ctr-id -t 10
+ExecReload=/usr/bin/podman kill -s HUP openbao-app
+SyslogIdentifier=%u
+ExecStopPost=/usr/bin/podman rm --ignore -f --cidfile %t/openbao-app.ctr-id
+PIDFile=%t/openbao-app.pid
+Type=forking
+
+[Install]
+WantedBy=default.target
