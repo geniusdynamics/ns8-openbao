@@ -27,7 +27,11 @@ The output of the command will return the instance name.
 Output example:
 
 ```json
-{"module_id": "openbao1", "image_name": "openbao", "image_url": "ghcr.io/geniusdynamics/openbao:latest"}
+{
+  "module_id": "openbao1",
+  "image_name": "openbao",
+  "image_url": "ghcr.io/geniusdynamics/openbao:latest"
+}
 ```
 
 ## Configure
@@ -63,8 +67,8 @@ To update the module to a new version:
 
 ```bash
 api-cli run update-module --data '{
-  "module_url": "ghcr.io/geniusdynamics/termix:latest",
-  "instances": ["termix1"],
+  "module_url": "ghcr.io/geniusdynamics/openbao:latest",
+  "instances": ["openbao1"],
   "force": true
 }'
 ```
