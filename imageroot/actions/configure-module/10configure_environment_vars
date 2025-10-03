@@ -13,9 +13,8 @@ import agent
 # If parsing fails, output everything to stderr
 data = json.load(sys.stdin)
 
-#This is specific to you module, so you need to change it accordingly.
-#agent.dump_env()
- 
-openbao = { 
-} 
-agent.write_envfile("openbao.env", openbao) 
+# This is specific to you module, so you need to change it accordingly.
+# agent.dump_env()
+
+openbao = {"BAO_ADDR": "https://0.0.0.0:8200", "VAULT_ADDR": "http://0.0.0.0.:8200"}
+agent.write_envfile("openbao.env", openbao)
