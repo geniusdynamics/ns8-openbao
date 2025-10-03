@@ -18,7 +18,7 @@ TimeoutStopSec=70
 ExecStartPre=/bin/mkdir -p tmp
 ExecStartPre=/bin/rm -f %t/openbao-app.pid %t/openbao-app.ctr-id
 ExecStartPre=-runagent discover-smarthost
-ExecStart=/usr/bin/podman run --conmon-pidfile %t/openbao-app.pid  --cidfile %t/openbao-app.ctr-id --cgroups=no-conmon  --pod-id-file %t/openbao.pod-id --replace -d --name  openbao-app  --volume openbaoconfig:/openbao/config:Z   --env-file openbao.env  ${OPENBAO_IMAGE}  
+ExecStart=/usr/bin/podman run --conmon-pidfile %t/openbao-app.pid  --cidfile %t/openbao-app.ctr-id --cgroups=no-conmon  --pod-id-file %t/openbao.pod-id --replace --network=slirp4netns:allow_host_loopback=true --add-host=accountprovider:10.0.2.2 -d --name  openbao-app  --volume openbaoconfig:/openbao/config:Z   --env-file openbao.env  ${OPENBAO_IMAGE}  
 ExecStop=/usr/bin/podman stop --ignore --cidfile %t/openbao-app.ctr-id -t 10
 ExecReload=/usr/bin/podman kill -s HUP openbao-app
 SyslogIdentifier=%u
