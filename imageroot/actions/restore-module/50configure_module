@@ -1,0 +1,30 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+import os
+import sys
+import agent
+import openbao
+
+env = openbao.read_environment()
+
+if not env.get("TRAEFIK_HOST"):
+    print("The original instance was never configured: skipping configure-module", file=sys.stderr)
+    sys.exit(0)
+
+# Let's Encrypt is not requested here: the host name might not resolve to
+# this node yet. It can be enabled again from the Settings page.
+request = {
+    "host": env["TRAEFIK_HOST"],
+    "http2https": openbao.is_true(env["TRAEFIK_HTTP2HTTPS"]),
+    "log_level": env["OPENBAO_LOG_LEVEL"],
+    "audit_log": openbao.is_true(env["OPENBAO_AUDIT_LOG"]),
+    "unseal_mode": env["OPENBAO_UNSEAL_MODE"],
+}
+
+configure_retval = agent.tasks.run(agent_id=os.environ["AGENT_ID"], action="configure-module", data=request)
+agent.assert_exp(configure_retval["exit_code"] == 0, "The configure-module subtask failed!")

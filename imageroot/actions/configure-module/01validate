@@ -1,0 +1,45 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+import json
+import os
+import sys
+import agent
+import openbao
+
+agent.set_weight(os.path.basename(__file__), 0)  # Validation step, no task progress
+
+request = json.load(sys.stdin)
+errors = []
+
+host = request["host"]
+if host != os.environ.get("TRAEFIK_HOST", "") and agent.http_route_in_use(domain=host):
+    errors.append({
+        "field": "host",
+        "parameter": "host",
+        "value": host,
+        "error": "domain_already_used_in_traefik",
+    })
+
+# The seal type is written in the OpenBao storage at initialization time.
+# Switching it afterwards requires a manual seal migration.
+current_mode = os.environ.get("OPENBAO_UNSEAL_MODE", openbao.DEFAULTS["OPENBAO_UNSEAL_MODE"])
+requested_mode = request.get("unseal_mode", current_mode)
+if requested_mode != current_mode:
+    state = openbao.storage_state()
+    if state != "uninitialized":
+        errors.append({
+            "field": "unseal_mode",
+            "parameter": "unseal_mode",
+            "value": requested_mode,
+            "error": "unseal_mode_locked" if state == "initialized" else "unseal_mode_cannot_verify",
+        })
+
+if errors:
+    agent.set_status("validation-failed")
+    json.dump(errors, fp=sys.stdout)
+    sys.exit(3)

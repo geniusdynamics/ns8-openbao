@@ -1,15 +1,15 @@
 #!/bin/bash
 
 #
-# Copyright (C) 2023 Nethesis S.r.l.
+# Copyright (C) 2026 Genius Dynamics
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 
-# If the control reaches this step, the service can be enabled and started
+#
+# Restart OpenBao with the new image. With manual unseal the server must
+# be unsealed again after the update.
+#
 
-set -e
-
-# Redirect any output to the journal (stderr)
 exec 1>&2
 
 systemctl --user try-restart openbao.service

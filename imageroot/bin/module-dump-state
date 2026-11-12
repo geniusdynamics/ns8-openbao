@@ -1,21 +1,44 @@
 #!/bin/bash
 
 #
-# Copyright (C) 2022 Nethesis S.r.l.
+# Copyright (C) 2026 Genius Dynamics
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 
-set -e
+#
+# Runs before the Restic backup, with the state directory as CWD.
+#
+# With automatic unseal, OpenBao is stopped for a few seconds to take a
+# consistent copy of the Raft storage, then it is started again and
+# unseals itself. The service is restarted by this script itself, because
+# module-cleanup-state does not run if the backup fails.
+#
+# With manual unseal, stopping OpenBao would leave it sealed until an
+# operator provides the unseal keys, so only the live data volume is saved.
+#
 
-if ! systemctl --user -q is-active openbao.service; then
+set -e
+exec 1>&2
+
+rm -f openbao-data.tar
+
+if [[ "${OPENBAO_UNSEAL_MODE:-manual}" != "auto" ]]; then
+    echo "Manual unseal mode: the OpenBao data volume is saved while the service is running"
     exit 0
 fi
 
-podman exec mariadb-app mysqldump \
-        --databases openbao \
-        --default-character-set=utf8mb4 \
-        --skip-dump-date \
-        --ignore-table=mysql.event \
-        --single-transaction \
-        --quick \
-        --add-drop-table  > openbao.sql
+if ! podman volume exists openbao-data; then
+    exit 0
+fi
+
+mountpoint=$(podman volume inspect --format '{{.Mountpoint}}' openbao-data)
+
+if systemctl --user -q is-active openbao.service; then
+    trap 'systemctl --user start openbao.service' EXIT
+    echo "Stopping OpenBao to take a consistent copy of its storage"
+    systemctl --user stop openbao.service
+fi
+
+podman unshare tar --numeric-owner -C "${mountpoint}" -cpf openbao-data.tar .
+chmod 0600 openbao-data.tar
+echo "OpenBao storage copied to openbao-data.tar"

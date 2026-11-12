@@ -1,5 +1,6 @@
 <!--
-  Copyright (C) 2022 Nethesis S.r.l.
+  Copyright (C) 2023 Nethesis S.r.l.
+  Copyright (C) 2026 Genius Dynamics
   SPDX-License-Identifier: GPL-3.0-or-later
 -->
 <template>
@@ -23,21 +24,21 @@
       <cv-column>
         <cv-tile light>
           <cv-form @submit.prevent="configureModule">
-            <cv-text-input
-              :label="$t('settings.openbao_fqdn')"
-              placeholder="openbao.example.org"
+            <NsTextInput
+              :label="$t('settings.host')"
+              :helper-text="$t('settings.host_helper')"
+              placeholder="vault.example.org"
               v-model.trim="host"
               class="mg-bottom"
               :invalid-message="$t(error.host)"
-              :disabled="loading.getConfiguration || loading.configureModule"
+              :disabled="isFormDisabled"
               ref="host"
-            >
-            </cv-text-input>
-            <cv-toggle
+            />
+            <NsToggle
               value="letsEncrypt"
               :label="$t('settings.lets_encrypt')"
               v-model="isLetsEncryptEnabled"
-              :disabled="loading.getConfiguration || loading.configureModule"
+              :disabled="isFormDisabled"
               class="mg-bottom"
             >
               <template slot="text-left">{{
@@ -46,12 +47,12 @@
               <template slot="text-right">{{
                 $t("settings.enabled")
               }}</template>
-            </cv-toggle>
-            <cv-toggle
+            </NsToggle>
+            <NsToggle
               value="httpToHttps"
               :label="$t('settings.http_to_https')"
               v-model="isHttpToHttpsEnabled"
-              :disabled="loading.getConfiguration || loading.configureModule"
+              :disabled="isFormDisabled"
               class="mg-bottom"
             >
               <template slot="text-left">{{
@@ -60,30 +61,105 @@
               <template slot="text-right">{{
                 $t("settings.enabled")
               }}</template>
-            </cv-toggle>
-              <!-- advanced options -->
+            </NsToggle>
+            <cv-radio-group
+              :legend="$t('settings.unseal_mode')"
+              vertical
+              class="mg-bottom"
+              ref="unseal_mode"
+            >
+              <cv-radio-button
+                :label="$t('settings.unseal_mode_manual')"
+                value="manual"
+                v-model="unsealMode"
+                :disabled="isFormDisabled || isUnsealModeLocked"
+              />
+              <p class="radio-description">
+                {{ $t("settings.unseal_mode_manual_description") }}
+              </p>
+              <cv-radio-button
+                :label="$t('settings.unseal_mode_auto')"
+                value="auto"
+                v-model="unsealMode"
+                :disabled="isFormDisabled || isUnsealModeLocked"
+              />
+              <p class="radio-description">
+                {{ $t("settings.unseal_mode_auto_description") }}
+              </p>
+            </cv-radio-group>
+            <NsInlineNotification
+              v-if="isUnsealModeLocked"
+              kind="info"
+              :title="$t('settings.unseal_mode_locked')"
+              :showCloseButton="false"
+              class="maxwidth"
+            />
+            <NsInlineNotification
+              v-if="error.unseal_mode"
+              kind="error"
+              :title="error.unseal_mode"
+              :showCloseButton="false"
+              class="maxwidth"
+            />
+            <!-- advanced options -->
             <cv-accordion ref="accordion" class="maxwidth mg-bottom">
-              <cv-accordion-item :open="toggleAccordion[0]">
+              <cv-accordion-item :open="isAdvancedOpen">
                 <template slot="title">{{ $t("settings.advanced") }}</template>
                 <template slot="content">
+                  <cv-select
+                    :label="$t('settings.log_level')"
+                    v-model="logLevel"
+                    :disabled="isFormDisabled"
+                    class="mg-bottom"
+                    ref="log_level"
+                  >
+                    <cv-select-option
+                      v-for="level in logLevels"
+                      :key="level"
+                      :value="level"
+                      >{{ $t("settings.log_level_" + level) }}</cv-select-option
+                    >
+                  </cv-select>
+                  <NsToggle
+                    value="auditLog"
+                    :label="$t('settings.audit_log')"
+                    v-model="isAuditLogEnabled"
+                    :disabled="isFormDisabled"
+                  >
+                    <template slot="tooltip">{{
+                      $t("settings.audit_log_helper")
+                    }}</template>
+                    <template slot="text-left">{{
+                      $t("settings.disabled")
+                    }}</template>
+                    <template slot="text-right">{{
+                      $t("settings.enabled")
+                    }}</template>
+                  </NsToggle>
                 </template>
               </cv-accordion-item>
             </cv-accordion>
-            <cv-row v-if="error.configureModule">
-              <cv-column>
-                <NsInlineNotification
-                  kind="error"
-                  :title="$t('action.configure-module')"
-                  :description="error.configureModule"
-                  :showCloseButton="false"
-                />
-              </cv-column>
-            </cv-row>
+            <NsInlineNotification
+              v-if="isRestartRequired"
+              kind="warning"
+              :title="$t('settings.restart_warning_title')"
+              :description="$t('settings.restart_warning_description')"
+              :showCloseButton="false"
+              class="maxwidth"
+            />
+            <NsInlineNotification
+              v-if="error.configureModule"
+              kind="error"
+              :title="$t('action.configure-module')"
+              :description="error.configureModule"
+              :showCloseButton="false"
+              class="maxwidth"
+            />
             <NsButton
               kind="primary"
               :icon="Save20"
               :loading="loading.configureModule"
-              :disabled="loading.getConfiguration || loading.configureModule"
+              :disabled="isFormDisabled"
               >{{ $t("settings.save") }}</NsButton
             >
           </cv-form>
@@ -122,11 +198,19 @@ export default {
         page: "settings",
       },
       urlCheckInterval: null,
+      logLevels: ["trace", "debug", "info", "warn", "error"],
       host: "",
       isLetsEncryptEnabled: false,
       isHttpToHttpsEnabled: true,
+      unsealMode: "manual",
+      logLevel: "info",
+      isAuditLogEnabled: false,
+      isAdvancedOpen: false,
+      savedConfig: null,
+      openbaoStatus: null,
       loading: {
         getConfiguration: false,
+        getOpenbaoStatus: false,
         configureModule: false,
       },
       error: {
@@ -135,14 +219,34 @@ export default {
         host: "",
         lets_encrypt: "",
         http2https: "",
+        unseal_mode: "",
+        log_level: "",
+        audit_log: "",
       },
     };
   },
   computed: {
     ...mapState(["instanceName", "core", "appName"]),
-  },
-  created() {
-    this.getConfiguration();
+    isFormDisabled() {
+      return (
+        this.loading.getConfiguration ||
+        this.loading.getOpenbaoStatus ||
+        this.loading.configureModule
+      );
+    },
+    isUnsealModeLocked() {
+      // The seal type is stored by OpenBao at initialization time
+      return !!(this.openbaoStatus && this.openbaoStatus.initialized);
+    },
+    isRestartRequired() {
+      if (!this.savedConfig || !this.savedConfig.host) {
+        return false;
+      }
+      return (
+        this.host !== this.savedConfig.host ||
+        this.unsealMode !== this.savedConfig.unseal_mode
+      );
+    },
   },
   beforeRouteEnter(to, from, next) {
     next((vm) => {
@@ -153,6 +257,10 @@ export default {
   beforeRouteLeave(to, from, next) {
     clearInterval(this.urlCheckInterval);
     next();
+  },
+  created() {
+    this.getConfiguration();
+    this.getOpenbaoStatus();
   },
   methods: {
     async getConfiguration() {
@@ -199,12 +307,56 @@ export default {
     },
     getConfigurationCompleted(taskContext, taskResult) {
       const config = taskResult.output;
+      this.savedConfig = config;
       this.host = config.host;
       this.isLetsEncryptEnabled = config.lets_encrypt;
-      this.isHttpToHttpsEnabled = config.http2https;
-
+      // new instances default to HTTPS redirection
+      this.isHttpToHttpsEnabled = config.host ? config.http2https : true;
+      this.unsealMode = config.unseal_mode;
+      this.logLevel = config.log_level;
+      this.isAuditLogEnabled = config.audit_log;
       this.loading.getConfiguration = false;
       this.focusElement("host");
+    },
+    async getOpenbaoStatus() {
+      this.loading.getOpenbaoStatus = true;
+      const taskAction = "get-openbao-status";
+      const eventId = this.getUuid();
+
+      this.core.$root.$once(
+        `${taskAction}-aborted-${eventId}`,
+        this.getOpenbaoStatusAborted
+      );
+      this.core.$root.$once(
+        `${taskAction}-completed-${eventId}`,
+        this.getOpenbaoStatusCompleted
+      );
+
+      const res = await to(
+        this.createModuleTaskForApp(this.instanceName, {
+          action: taskAction,
+          extra: {
+            title: this.$t("action." + taskAction),
+            isNotificationHidden: true,
+            eventId,
+          },
+        })
+      );
+      const err = res[0];
+
+      if (err) {
+        // not blocking: the backend validates the unseal mode anyway
+        console.error(`error creating task ${taskAction}`, err);
+        this.loading.getOpenbaoStatus = false;
+      }
+    },
+    getOpenbaoStatusAborted(taskResult, taskContext) {
+      console.error(`${taskContext.action} aborted`, taskResult);
+      this.loading.getOpenbaoStatus = false;
+    },
+    getOpenbaoStatusCompleted(taskContext, taskResult) {
+      this.openbaoStatus = taskResult.output;
+      this.loading.getOpenbaoStatus = false;
     },
     validateConfigureModule() {
       this.clearErrors(this);
@@ -226,8 +378,16 @@ export default {
 
       for (const validationError of validationErrors) {
         const param = validationError.parameter;
+
+        if (param === "(root)") {
+          continue;
+        }
         // set i18n error message
         this.error[param] = this.$t("settings." + validationError.error);
+
+        if (["log_level", "audit_log"].includes(param)) {
+          this.isAdvancedOpen = true;
+        }
 
         if (!focusAlreadySet) {
           this.focusElement(param);
@@ -236,8 +396,6 @@ export default {
       }
     },
     async configureModule() {
-      this.error.test_imap = false;
-      this.error.test_smtp = false;
       const isValidationOk = this.validateConfigureModule();
       if (!isValidationOk) {
         return;
@@ -264,6 +422,7 @@ export default {
         `${taskAction}-completed-${eventId}`,
         this.configureModuleCompleted
       );
+
       const res = await to(
         this.createModuleTaskForApp(this.instanceName, {
           action: taskAction,
@@ -271,9 +430,12 @@ export default {
             host: this.host,
             lets_encrypt: this.isLetsEncryptEnabled,
             http2https: this.isHttpToHttpsEnabled,
+            unseal_mode: this.unsealMode,
+            log_level: this.logLevel,
+            audit_log: this.isAuditLogEnabled,
           },
           extra: {
-            title: this.$t("settings.instance_configuration", {
+            title: this.$t("settings.configure_instance", {
               instance: this.instanceName,
             }),
             description: this.$t("settings.configuring"),
@@ -298,8 +460,9 @@ export default {
     configureModuleCompleted() {
       this.loading.configureModule = false;
 
-      // reload configuration
+      // reload configuration and server state
       this.getConfiguration();
+      this.getOpenbaoStatus();
     },
   },
 };
@@ -307,11 +470,18 @@ export default {
 
 <style scoped lang="scss">
 @import "../styles/carbon-utils";
+
 .mg-bottom {
   margin-bottom: $spacing-06;
 }
 
 .maxwidth {
   max-width: 38rem;
+}
+
+.radio-description {
+  max-width: 38rem;
+  margin: 0 0 $spacing-05 $spacing-07;
+  color: $text-02;
 }
 </style>

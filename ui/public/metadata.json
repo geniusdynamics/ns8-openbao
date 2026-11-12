@@ -1,19 +1,22 @@
 {
-  "name": "openbao",
+  "name": "OpenBao",
+  "upstream_name": "OpenBao 2.7",
   "description": {
-    "en": "My openbao module"
+    "en": "Secrets manager to store and control access to tokens, passwords, certificates and encryption keys"
   },
-  "categories": [],
+  "categories": [
+    "security"
+  ],
   "authors": [
     {
-      "name": "Name Surname",
-      "email": "author@yourmail.org"
+      "name": "Genius Dynamics"
     }
   ],
   "docs": {
-    "documentation_url": "https://docs.openbao.com/",
-    "bug_url": "https://github.com/NethServer/dev",
-    "code_url": "https://github.com/author/ns8-openbao"
+    "documentation_url": "https://github.com/geniusdynamics/ns8-openbao#readme",
+    "bug_url": "https://github.com/geniusdynamics/ns8-openbao/issues",
+    "code_url": "https://github.com/geniusdynamics/ns8-openbao",
+    "relnotes_url": "https://github.com/geniusdynamics/ns8-openbao/releases"
   },
-  "source": "ghcr.io/nethserver/openbao"
+  "source": "ghcr.io/geniusdynamics/openbao"
 }

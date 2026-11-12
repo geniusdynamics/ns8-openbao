@@ -1,0 +1,48 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "get-openbao-status output",
+    "$id": "http://schema.nethserver.org/openbao/get-openbao-status-output.json",
+    "description": "Get the OpenBao server state: initialization and seal status",
+    "examples": [
+        {
+            "service_active": true,
+            "reachable": true,
+            "initialized": true,
+            "sealed": false,
+            "seal_type": "shamir",
+            "version": "2.7.2",
+            "threshold": 3,
+            "shares": 5,
+            "progress": 0,
+            "unseal_mode": "manual",
+            "ui_url": "https://vault.example.org/ui/"
+        }
+    ],
+    "type": "object",
+    "required": [
+        "service_active",
+        "reachable",
+        "initialized",
+        "sealed",
+        "seal_type",
+        "version",
+        "threshold",
+        "shares",
+        "progress",
+        "unseal_mode",
+        "ui_url"
+    ],
+    "properties": {
+        "service_active": {"type": "boolean", "description": "The openbao.service unit is active"},
+        "reachable": {"type": "boolean", "description": "The OpenBao API answered"},
+        "initialized": {"type": "boolean"},
+        "sealed": {"type": "boolean"},
+        "seal_type": {"type": "string", "description": "'shamir' or 'static'; empty if unknown"},
+        "version": {"type": "string"},
+        "threshold": {"type": "integer", "minimum": 0, "description": "Number of key shares required to unseal"},
+        "shares": {"type": "integer", "minimum": 0, "description": "Total number of key shares"},
+        "progress": {"type": "integer", "minimum": 0, "description": "Key shares provided so far for the current unseal"},
+        "unseal_mode": {"type": "string", "enum": ["manual", "auto"]},
+        "ui_url": {"type": "string", "description": "OpenBao web UI URL; empty if the host name is not configured"}
+    }
+}

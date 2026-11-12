@@ -1,36 +1,51 @@
 {
     "$schema": "http://json-schema.org/draft-07/schema#",
-    "title": "Get openbao settings",
-    "$id": "http://nethserver.org/json-schema/task/input/openbao/get-configuration",
-    "description": "Get openbao settings",
+    "title": "get-configuration output",
+    "$id": "http://schema.nethserver.org/openbao/get-configuration-output.json",
+    "description": "Get the OpenBao instance configuration",
     "examples": [
         {
-            "host": "openbao.domain.org",
+            "host": "vault.example.org",
             "http2https": true,
-            "lets_encrypt": true
+            "lets_encrypt": true,
+            "log_level": "info",
+            "audit_log": false,
+            "unseal_mode": "manual"
         }
     ],
     "type": "object",
     "required": [
         "host",
         "http2https",
-        "lets_encrypt"
+        "lets_encrypt",
+        "log_level",
+        "audit_log",
+        "unseal_mode"
     ],
     "properties": {
         "host": {
             "type": "string",
-            "description": "Host name for the application, like 'openbao.domain.org'",
-            "format": "idn-hostname"
-        },
-        "lets_encrypt": {
-            "type": "boolean",
-            "title": "Let's Encrypt certificate",
-            "description": "Request a valid Let's Encrypt certificate."
+            "description": "Host name of the OpenBao API and web UI. Empty if not configured yet"
         },
         "http2https": {
             "type": "boolean",
-            "title": "HTTP to HTTPS redirection",
-            "description": "Redirect all the HTTP requests to HTTPS"
+            "description": "HTTP requests are redirected to HTTPS"
+        },
+        "lets_encrypt": {
+            "type": "boolean",
+            "description": "A Let's Encrypt certificate is requested for the host name"
+        },
+        "log_level": {
+            "type": "string",
+            "enum": ["trace", "debug", "info", "warn", "error"]
+        },
+        "audit_log": {
+            "type": "boolean",
+            "description": "The audit log is sent to the systemd journal"
+        },
+        "unseal_mode": {
+            "type": "string",
+            "enum": ["manual", "auto"]
         }
     }
 }
