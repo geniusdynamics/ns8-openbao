@@ -49,6 +49,16 @@ if "ldap_group_policies" in request:
 if "starter_kits" in request:
     agent.set_env("OPENBAO_STARTER_KITS", ",".join(request["starter_kits"]))
 
+set_bool("OPENBAO_VPN_API", "vpn_api")
+for field, var in [
+        ("transit_address", "OPENBAO_TRANSIT_ADDRESS"),
+        ("transit_mount", "OPENBAO_TRANSIT_MOUNT"),
+        ("transit_key", "OPENBAO_TRANSIT_KEY"),
+    ]:
+    if field in request:
+        agent.set_env(var, request[field])
+set_bool("OPENBAO_TRANSIT_TLS_SKIP_VERIFY", "transit_tls_skip_verify")
+
 if "notify_recipients" in request:
     agent.set_env("OPENBAO_NOTIFY_RECIPIENTS", ",".join(request["notify_recipients"]))
 

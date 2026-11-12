@@ -40,6 +40,9 @@ elif change == "reload":
 else:
     print("OpenBao configuration is unchanged", file=sys.stderr)
 
+# Daily renewal of the module token
+systemctl("enable", "--now", "openbao-maintenance.timer")
+
 # Email notifications through the cluster smarthost
 if openbao.notify_recipients(openbao.read_environment()):
     systemctl("enable", "--now", "openbao-notify.timer")

@@ -92,10 +92,18 @@ if user_domain:
 if request.get("auto_initialize", False):
     if not openbao.ldap_plugin_available() and not openbao.install_plugins().get("ldap"):
         fail("auto_initialize", True, "ldap_plugin_missing")
-    elif requested_mode != "auto":
+    elif requested_mode not in ("auto", "transit"):
         fail("auto_initialize", True, "auto_initialize_requires_auto_unseal")
     elif not user_domain:
         fail("auto_initialize", True, "auto_initialize_requires_user_domain")
+
+if requested_mode == "transit":
+    if not request.get("transit_address", env["OPENBAO_TRANSIT_ADDRESS"]):
+        fail("transit_address", "", "transit_address_required")
+    if not request.get("transit_key", env["OPENBAO_TRANSIT_KEY"]):
+        fail("transit_key", "", "transit_key_required")
+    if not os.path.exists(openbao.TRANSIT_TOKEN_FILE):
+        fail("unseal_mode", requested_mode, "transit_token_missing")
 
 if errors:
     agent.set_status("validation-failed")

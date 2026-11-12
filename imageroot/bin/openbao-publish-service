@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# Publish the cluster network API as an NS8 service provider, so other
+# modules can discover it:
+#
+#   agent.list_service_providers(rdb, "openbao", "http")
+#
+# The key is removed when the cluster network API is disabled.
+#
+
+import json
+import os
+import sys
+import agent
+import openbao
+
+env = openbao.read_environment()
+module_id = os.environ["MODULE_ID"]
+key = f"module/{module_id}/srv/http/openbao"
+endpoint = openbao.vpn_api_endpoint(env)
+try:
+    rdb = agent.redis_connect(privileged=True)
+    if endpoint:
+        rdb.hset(key, mapping={
+            "host": endpoint[0],
+            "port": str(endpoint[1]),
+            "url": f"http://{endpoint[0]}:{endpoint[1]}",
+            "node": os.environ.get("NODE_ID", ""),
+        })
+    else:
+        rdb.delete(key)
+    # Event named after the service, as by NS8 convention
+    rdb.publish(f"module/{module_id}/event/openbao-changed", json.dumps({
+        "module_id": module_id,
+        "module_uuid": os.environ.get("MODULE_UUID", ""),
+    }))
+except Exception as ex:
+    print(agent.SD_WARNING + f"Cannot publish the service provider: {ex}", file=sys.stderr)

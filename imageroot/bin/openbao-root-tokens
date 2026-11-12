@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# List the root tokens of OpenBao and optionally revoke them. Run it on the
+# node with an administrator token (read from BAO_TOKEN or prompted):
+#
+#   runagent -m openbao1 openbao-root-tokens            # list
+#   runagent -m openbao1 openbao-root-tokens --revoke   # revoke, asking first
+#
+# Revoke root tokens once other administrator access (directory login,
+# userpass, AppRole) is verified. A new one can be generated with the
+# unseal or recovery keys: bao operator generate-root.
+#
+
+import getpass
+import os
+import sys
+import urllib.error
+import openbao
+
+revoke = "--revoke" in sys.argv
+assume_yes = "--yes" in sys.argv
+
+token = os.environ.get("BAO_TOKEN") or getpass.getpass("OpenBao administrator token: ")
+
+
+def call(path, method="GET", data=None):
+    return openbao.api_request(path, method=method, data=data, token=token)
+
+
+try:
+    accessors = call("auth/token/accessors", method="LIST").get("data", {}).get("keys", [])
+    own = call("auth/token/lookup-self").get("data", {}).get("accessor")
+except urllib.error.HTTPError as ex:
+    sys.exit(f"The token was refused: HTTP {ex.code}")
+
+roots = []
+for accessor in accessors:
+    info = call("auth/token/lookup-accessor", method="POST", data={"accessor": accessor}).get("data", {})
+    if "root" in info.get("policies", []):
+        roots.append(info)
+        marker = " (the token used now)" if accessor == own else ""
+        print(f"root token accessor={accessor} created={info.get('creation_time')} "
+              f"display_name={info.get('display_name')}{marker}")
+
+if not roots:
+    print("No root token found")
+    sys.exit(0)
+
+if not revoke:
+    print(f"{len(roots)} root token(s). Run again with --revoke to revoke them.")
+    sys.exit(0)
+
+if not assume_yes:
+    answer = input(f"Revoke {len(roots)} root token(s)? Type 'yes': ")
+    if answer.strip().lower() != "yes":
+        sys.exit("Nothing revoked")
+
+for info in roots:
+    if info.get("accessor") == own:
+        continue
+    call("auth/token/revoke-accessor", method="POST", data={"accessor": info["accessor"]})
+    print(f"Revoked {info['accessor']}")
+if any(info.get("accessor") == own for info in roots):
+    call("auth/token/revoke-self", method="POST", data={})
+    print("Revoked the token used by this command")

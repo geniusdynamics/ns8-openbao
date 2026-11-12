@@ -29,7 +29,10 @@ The module runs OpenBao as a rootless container with:
 - [Starter kits](#starter-kits)
 - [Applying settings that need a token](#applying-settings-that-need-a-token)
 - [Notifications and alerts](#notifications-and-alerts)
+- [Module token, snapshots and root tokens](#module-token-snapshots-and-root-tokens)
+- [Cluster network API](#cluster-network-api)
 - [Prometheus metrics](#prometheus-metrics)
+- [Not implemented on purpose](#not-implemented-on-purpose)
 - [Get the configuration and state](#get-the-configuration-and-state)
 - [Backup and restore](#backup-and-restore)
 - [Update](#update)
@@ -103,6 +106,11 @@ Parameters:
   see [Group policies](#group-policies)
 - `starter_kits`: components prepared at initialization, any of `kv`
   (default), `pki`, `approle`; see [Starter kits](#starter-kits)
+- `vpn_api`: also publish the API on the cluster VPN, see
+  [Cluster network API](#cluster-network-api). Default `false`
+- `transit_address`, `transit_mount` (default `transit`), `transit_key`,
+  `transit_tls_skip_verify`: settings of the `transit` unseal mode, see
+  [Unseal modes](#unseal-modes)
 
 Omitted optional parameters keep their current value.
 
@@ -278,13 +286,26 @@ changes later:
 
 ## Unseal modes
 
-| | `manual` (default) | `auto` |
-|---|---|---|
-| Seal | Shamir key shares | `static` seal with a 32-byte key |
-| After restart, update or reboot | sealed: an operator enters the unseal keys | unseals itself |
-| Key storage | keys held by operators only | key generated on the node, `state/openbao-seal.key` (mode 0600), included in backups |
-| Backup consistency | live copy of the Raft storage | OpenBao stopped for a few seconds for a consistent copy |
-| Protection against disk or backup theft | yes | no: whoever holds the key file and the data can decrypt the secrets |
+| | `manual` (default) | `auto` | `transit` |
+|---|---|---|---|
+| Seal | Shamir key shares | `static` seal with a 32-byte key | Transit engine of an external OpenBao or Vault |
+| After restart, update or reboot | sealed: an operator enters the unseal keys | unseals itself | unseals itself while the external server is reachable |
+| Key storage | keys held by operators only | key generated on the node, `state/openbao-seal.key` (mode 0600), included in backups | key held by the external server; its token in `state/openbao-transit.token` (mode 0600), included in backups |
+| Backup consistency | live copy, or Raft snapshot with the module token | OpenBao stopped for a few seconds for a consistent copy | live copy, or Raft snapshot with the module token |
+| Protection against disk or backup theft | yes | no: whoever holds the key file and the data can decrypt the secrets | yes, if the external server is protected: revoke the token to make stolen copies useless |
+
+For `transit`, prepare the external server (a Transit key, and a token
+allowed to `update` `<mount>/encrypt/<key>` and `<mount>/decrypt/<key>`),
+store the token on the node, then select the mode in *Settings*:
+
+```bash
+runagent -m openbao1 openbao-transit-token
+```
+
+The token is never entered in the web UI, so it never passes through
+Redis; OpenBao renews it automatically. Another OpenBao instance of the
+cluster can be the Transit server, reached through its
+[cluster network API](#cluster-network-api).
 
 Choose `manual` when the stored secrets are sensitive enough to justify
 an operator unsealing OpenBao after every restart. Choose `auto` when
@@ -422,6 +443,58 @@ paths, both through the cluster SMTP smarthost (configured in the cluster
   appear in the cluster alert list and are mailed to the cluster alert
   recipients.
 
+## Module token, snapshots and root tokens
+
+The module can hold a **module token**: a periodic OpenBao token with the
+narrow `ns8-module` policy, stored on the node (`state/openbao-module.token`,
+mode 0600), never returned by any action. It can take Raft snapshots and
+read token metadata (not tokens, not secrets); it cannot change the
+configuration or revoke anything. It is renewed daily by
+`openbao-maintenance.timer`. With it:
+
+- every backup includes `openbao.snap`, a **consistent Raft snapshot**
+  taken without stopping OpenBao (in all unseal modes)
+- the *Status* page warns when a **root token** is still active
+
+Self-initialization creates it automatically. For other instances, create
+it once with an administrator token:
+
+```bash
+runagent -m openbao1 openbao-module-token create
+runagent -m openbao1 openbao-module-token status     # valid / missing / invalid
+runagent -m openbao1 openbao-module-token revoke
+```
+
+List and revoke root tokens once other administrator access works:
+
+```bash
+runagent -m openbao1 openbao-root-tokens            # list
+runagent -m openbao1 openbao-root-tokens --revoke   # revoke, after confirmation
+```
+
+A snapshot can also be taken at any time with
+`runagent -m openbao1 openbao-snapshot /path/file.snap`.
+
+## Cluster network API
+
+With `vpn_api` enabled, the OpenBao API is also published on the third
+module TCP port, bound to the node cluster VPN address
+(`http://10.5.4.x:<port>`), for NethServer modules and services on other
+nodes. The traffic is encrypted by the cluster VPN (WireGuard). The
+public route through Traefik keeps working.
+
+The endpoint is published as an NS8 service provider, and the
+`openbao-changed` event is sent when it changes:
+
+```python
+rdb = agent.redis_connect(use_replica=True)
+providers = agent.list_service_providers(rdb, "openbao", "http")
+url = providers[0]["url"]   # e.g. http://10.5.4.1:20003
+```
+
+Instances installed with fewer TCP ports allocate the extra port when the
+option is first enabled (role `node:portsadm`).
+
 ## Prometheus metrics
 
 OpenBao [telemetry](https://openbao.org/docs/configuration/telemetry/) is
@@ -453,6 +526,20 @@ The second port is in the module `TCP_PORTS` environment variable
 (`runagent -m openbao1 printenv TCP_PORTS`). Metrics are served only while
 OpenBao is initialized and unsealed; the module own `openbao_up`,
 `openbao_sealed` and `openbao_initialized` metrics cover the other states.
+
+## Not implemented on purpose
+
+Some convenient features would require sending secrets through NethServer
+actions. Action inputs and outputs are kept in Redis for hours and are
+readable by other modules, so these are left out; use the safe
+alternative:
+
+| Not implemented | Why | Safe alternative |
+|---|---|---|
+| Unseal from the NethServer UI (pasting key shares) | key shares would be stored in Redis | *Status*, **Open OpenBao**: the OpenBao web UI unseals over HTTPS; or `bao operator unseal` |
+| Initialize from the NethServer UI | unseal keys and the root token would be stored in Redis | the OpenBao web UI or `bao operator init` (setups A, B), or self-initialization (setup C) |
+| Revoke root tokens from the NethServer UI | needs an administrator token in an action | `openbao-root-tokens --revoke` on the node, or `bao token revoke -self` |
+| Enter the Transit token in the NethServer UI | the token would be stored in Redis | `openbao-transit-token` on the node |
 
 ## Get the configuration and state
 

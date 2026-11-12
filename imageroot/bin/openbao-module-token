@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# Manage the module token, a periodic OpenBao token held on the node with
+# the narrow ns8-module policy. It enables consistent Raft snapshots in
+# backups, root token detection and Raft status on the Status page. It
+# cannot read secrets, change the configuration or revoke tokens.
+#
+#   runagent -m openbao1 openbao-module-token create   # needs an admin token
+#   runagent -m openbao1 openbao-module-token status
+#   runagent -m openbao1 openbao-module-token revoke
+#
+# Self-initialization creates it automatically. The administrator token
+# used by "create" is read from BAO_TOKEN or prompted on the terminal and
+# is never stored.
+#
+
+import getpass
+import os
+import sys
+import urllib.error
+import openbao
+
+action = sys.argv[1] if len(sys.argv) > 1 else "status"
+
+if action == "status":
+    print(openbao.module_token_status())
+    sys.exit(0)
+
+if action == "revoke":
+    token = openbao.read_module_token()
+    if token:
+        try:
+            openbao.api_request("auth/token/revoke-self", method="POST", data={}, token=token)
+        except urllib.error.HTTPError as ex:
+            print(f"Revoke failed: HTTP {ex.code}", file=sys.stderr)
+        os.unlink(openbao.MODULE_TOKEN_FILE)
+    print("Module token removed")
+    sys.exit(0)
+
+if action != "create":
+    sys.exit("Usage: openbao-module-token create|status|revoke")
+
+admin_token = os.environ.get("BAO_TOKEN") or getpass.getpass("OpenBao administrator token: ")
+try:
+    openbao.api_request(f"sys/policies/acl/{openbao.MODULE_POLICY_NAME}", method="POST",
+                        data={"policy": openbao.MODULE_POLICY}, token=admin_token)
+    response = openbao.api_request("auth/token/create-orphan", method="POST", data={
+        "policies": [openbao.MODULE_POLICY_NAME],
+        "display_name": "ns8-module",
+        "period": openbao.MODULE_TOKEN_PERIOD,
+        "renewable": True,
+    }, token=admin_token)
+except urllib.error.HTTPError as ex:
+    sys.exit(f"Cannot create the module token: HTTP {ex.code} {ex.read().decode(errors='replace')}")
+
+old_token = openbao.read_module_token()
+openbao.write_secret_file(openbao.MODULE_TOKEN_FILE, response["auth"]["client_token"])
+if old_token:
+    try:
+        openbao.api_request("auth/token/revoke-self", method="POST", data={}, token=old_token)
+    except (urllib.error.URLError, OSError):
+        pass
+print("Module token created: Raft snapshots and root token detection are enabled")

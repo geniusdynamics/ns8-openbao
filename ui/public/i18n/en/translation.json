@@ -48,7 +48,13 @@
     "not_running_description": "Check the system logs of the application for errors.",
     "directory_login": "Directory login",
     "directory_login_disabled": "Disabled",
-    "ldap_login": "Log in with directory account"
+    "ldap_login": "Log in with directory account",
+    "unseal_mode_transit": "Transit",
+    "unseal_mode_transit_description": "OpenBao unseals itself with an external Transit server",
+    "root_token_title": "A root token is still active",
+    "root_token_description": "Root tokens have unlimited access. Once other administrator access works, revoke them by running on the server: {command}",
+    "module_token_title": "Enable consistent backups and root token checks",
+    "module_token_description": "Give the module a limited token: backups then include a consistent Raft snapshot, and this page warns about active root tokens. Run on the server: {command}"
   },
   "settings": {
     "title": "Settings",
@@ -149,7 +155,22 @@
     "kit_pki_description": "A root CA at pki/ and an ns8-server role to issue TLS certificates for internal services.",
     "kit_approle": "Application login (AppRole)",
     "kit_approle_description": "Lets applications and scripts log in with a role ID and a secret ID.",
-    "apply_config_description": "OpenBao is already initialized or uses manual unseal, so the module cannot change it without an administrator token. After saving, run this command on the server and enter an OpenBao token when prompted: it applies directory login, group policies and starter kits. Run it again after changing them, or if the user domain credentials change."
+    "apply_config_description": "OpenBao is already initialized or uses manual unseal, so the module cannot change it without an administrator token. After saving, run this command on the server and enter an OpenBao token when prompted: it applies directory login, group policies and starter kits. Run it again after changing them, or if the user domain credentials change.",
+    "unseal_mode_transit": "Transit unseal (external OpenBao or Vault)",
+    "unseal_mode_transit_description": "The key that protects OpenBao is held by the Transit engine of another OpenBao or Vault server. OpenBao unseals itself while that server is reachable; no key is stored on this node.",
+    "transit_address": "Transit server URL",
+    "transit_mount": "Transit mount path",
+    "transit_key": "Transit key name",
+    "transit_tls_skip_verify": "Skip TLS certificate verification",
+    "transit_address_required": "Enter the URL of the Transit server",
+    "transit_key_required": "Enter the name of the Transit key",
+    "transit_token_missing": "Store the Transit token on the node first",
+    "transit_token_missing_title": "Transit token required",
+    "transit_token_missing_description": "For security the token is never entered here: run this command on the server and paste the token when asked. It needs update access to the encrypt and decrypt paths of the key.",
+    "vpn_api": "Cluster network API",
+    "vpn_api_helper": "Also publish the OpenBao API on the cluster VPN, for NethServer modules and services on other nodes. Traffic is encrypted by the cluster VPN.",
+    "vpn_api_url": "Cluster network address: {url}",
+    "vpn_api_port_unavailable": "No free TCP port for the cluster network API"
   },
   "about": {
     "title": "About"
@@ -243,6 +264,7 @@
     "manual_reminder_description": "After every restart, update or reboot, open OpenBao and enter the unseal keys. The Status page and email notifications tell you when it is sealed.",
     "done_initialized": "The new configuration is applied.",
     "done_setup_ldap": "To apply the directory login settings, run this command on the server and paste an OpenBao administrator token when asked:",
-    "kits_title": "Also prepare:"
+    "kits_title": "Also prepare:",
+    "transit_configured": "Configured in Settings: an external Transit server unseals OpenBao."
   }
 }

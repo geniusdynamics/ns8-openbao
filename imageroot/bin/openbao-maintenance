@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# Daily maintenance, run by openbao-maintenance.timer: renew the periodic
+# module token so it never expires.
+#
+
+import sys
+import urllib.error
+import openbao
+
+token = openbao.read_module_token()
+if not token:
+    sys.exit(0)
+status = openbao.get_seal_status()
+if not status or status.get("sealed"):
+    sys.exit(0)  # renewed at the next run
+try:
+    openbao.api_request("auth/token/renew-self", method="POST", data={}, token=token)
+    print("Module token renewed", file=sys.stderr)
+except urllib.error.HTTPError as ex:
+    print(f"<4>Cannot renew the module token: HTTP {ex.code}", file=sys.stderr)
+except (urllib.error.URLError, OSError) as ex:
+    print(f"<4>Cannot renew the module token: {ex}", file=sys.stderr)
