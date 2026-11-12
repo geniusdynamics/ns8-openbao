@@ -136,6 +136,7 @@ Check if a settings change is applied without sealing openbao
     Should Be Equal    ${status.sealed}    ${False}
 
 Check if the IP allow-list restricts access
+    [Teardown]    Remove IP Allow-list    ${module_id}    ${HOST}
     ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host": "${HOST}", "http2https": false, "ip_allowlist": ["192.0.2.0/24"]}'
     ...    return_rc=True  return_stdout=False
     Should Be Equal As Integers    ${rc}  0
