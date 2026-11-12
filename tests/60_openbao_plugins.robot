@@ -17,9 +17,11 @@ Plugin State
     ...    return_rc=True
     Should Be Equal As Integers    ${rc}  0
     &{result} =    Evaluate    json.loads($output)    modules=json
-    ${matches} =    Evaluate    [p for p in $result['plugins'] if p['id'] == $plugin_id]
-    Length Should Be    ${matches}    1
-    RETURN    ${matches[0]}
+    # Robot variables are not visible inside a comprehension, except in its
+    # first iterable: index by id, then look the id up outside it
+    &{by_id} =    Evaluate    {p['id']: p for p in $result['plugins']}
+    Dictionary Should Contain Key    ${by_id}    ${plugin_id}
+    RETURN    ${by_id}[${plugin_id}]
 
 Plugin Image Should Be Absent
     ${output} =    Execute Command    runagent -m ${module_id} podman images --format '{{.Repository}}'
