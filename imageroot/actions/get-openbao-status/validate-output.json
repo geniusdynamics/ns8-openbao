@@ -20,7 +20,16 @@
             "module_token": "valid",
             "root_token_present": false,
             "seal_migration_from": "",
-            "migration": false
+            "migration": false,
+            "ha": {
+                "role": "standalone",
+                "cluster": "",
+                "node_id": "ns8-openbao",
+                "raft_address": "127.0.0.1:8201",
+                "is_self": null,
+                "leader_address": "",
+                "peers": null
+            }
         }
     ],
     "type": "object",
@@ -40,7 +49,8 @@
         "module_token",
         "root_token_present",
         "seal_migration_from",
-        "migration"
+        "migration",
+        "ha"
     ],
     "properties": {
         "service_active": {
@@ -119,6 +129,72 @@
         "migration": {
             "type": "boolean",
             "description": "OpenBao is waiting for keys with 'bao operator unseal -migrate'"
+        },
+        "ha": {
+            "type": "object",
+            "description": "High availability state (experimental)",
+            "properties": {
+                "role": {
+                    "type": "string",
+                    "enum": [
+                        "standalone",
+                        "primary",
+                        "member"
+                    ]
+                },
+                "cluster": {
+                    "type": "string"
+                },
+                "node_id": {
+                    "type": "string"
+                },
+                "raft_address": {
+                    "type": "string"
+                },
+                "is_self": {
+                    "type": [
+                        "boolean",
+                        "null"
+                    ],
+                    "description": "This instance is the active (leader) node; null when unknown"
+                },
+                "leader_address": {
+                    "type": "string"
+                },
+                "peers": {
+                    "type": [
+                        "array",
+                        "null"
+                    ],
+                    "description": "Raft peers, read with the module token; null when not readable",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "node_id": {
+                                "type": "string"
+                            },
+                            "address": {
+                                "type": "string"
+                            },
+                            "leader": {
+                                "type": "boolean"
+                            },
+                            "voter": {
+                                "type": "boolean"
+                            }
+                        }
+                    }
+                }
+            },
+            "required": [
+                "role",
+                "cluster",
+                "node_id",
+                "raft_address",
+                "is_self",
+                "leader_address",
+                "peers"
+            ]
         }
     }
 }

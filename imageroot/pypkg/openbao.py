@@ -19,6 +19,7 @@ import os
 import secrets
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -63,7 +64,23 @@ DEFAULTS = {
     "OPENBAO_PUBLIC_ACCESS": "True",
     "OPENBAO_SNAPSHOT_KEEP": "0",
     "OPENBAO_SEAL_MIGRATION_FROM": "",
+    "OPENBAO_HA_ROLE": "standalone",
+    "OPENBAO_HA_CLUSTER": "",
+    "OPENBAO_HA_JOIN": "",
+    "OPENBAO_HA_JOIN_ADDRS": "",
+    "OPENBAO_RAFT_NODE_ID": "",
+    "OPENBAO_RAFT_RECOVER": "False",
 }
+
+# High availability (experimental): "standalone" is a single-node Raft
+# cluster, as in every 1.x release. A "primary" accepts members: its
+# cluster port is published on the node VPN address. A "member" joined the
+# Raft cluster of another instance.
+HA_ROLES = ["standalone", "primary", "member"]
+# NS8 service provider record of the instances that accept members:
+#   agent.list_service_providers(rdb, "openbao-cluster", "tcp")
+CLUSTER_SERVICE = "openbao-cluster"
+CLUSTER_CONTAINER_PORT = 8201
 
 SNAPSHOT_DIR = "snapshots"  # scheduled local snapshots, not in backups
 
@@ -167,12 +184,18 @@ HOST_LOOPBACK_ADDR = "10.0.2.2"
 METRICS_CONTAINER_PORT = 8202
 METRICS_PATH = "/v1/sys/metrics"
 
-# The Raft node ID and cluster address must never change: they are stored
-# inside the Raft data. Do not derive them from MODULE_ID, otherwise a
-# restore or a clone to a different instance name would leave Raft without
-# a leader.
+# The Raft node ID is stored inside the Raft data and never changes. It is
+# not derived from MODULE_ID, otherwise a restore or a clone to a different
+# instance name would leave Raft without a leader. Every standalone or
+# primary instance uses RAFT_NODE_ID; only a member that joins another
+# instance gets its own ID (OPENBAO_RAFT_NODE_ID, set once at join time and
+# kept by restore and clone). The cluster address of a standalone instance
+# stays on loopback; an HA instance uses its node VPN address, and the
+# address stored in the Raft data is rewritten with peers.json (see
+# write_raft_recovery).
 RAFT_NODE_ID = "ns8-openbao"
 CLUSTER_ADDR = "https://127.0.0.1:8201"
+LOCAL_RAFT_ADDRESS = "127.0.0.1:8201"
 
 # OpenBao listens on plain HTTP inside the container; the port is published
 # only on the host loopback interface and Traefik terminates TLS. Trust the
@@ -760,9 +783,156 @@ def list_snapshots():
     return sorted(snapshots, key=lambda s: s["created"], reverse=True)
 
 
+def ha_role(env):
+    role = env.get("OPENBAO_HA_ROLE", "standalone")
+    return role if role in HA_ROLES else "standalone"
+
+
+def raft_node_id(env):
+    return env.get("OPENBAO_RAFT_NODE_ID") or RAFT_NODE_ID
+
+
+def cluster_port(env):
+    """Return the TCP port of the Raft/cluster listener, or None."""
+    ports = os.environ.get("TCP_PORTS", "").split(",")
+    if len(ports) >= 4 and ports[3].strip().isdigit():
+        return int(ports[3])
+    value = env.get("OPENBAO_CLUSTER_PORT", "")
+    return int(value) if value.isdigit() else None
+
+
+def cluster_endpoint(env):
+    """Return (address, port) of the cluster listener of an HA instance, or None."""
+    if ha_role(env) == "standalone":
+        return None
+    port = cluster_port(env)
+    address = node_vpn_address() if port else None
+    if not port or not address:
+        return None
+    return address, port
+
+
+def raft_address(env):
+    """Return the host:port this instance has, or should have, in the Raft data."""
+    endpoint = cluster_endpoint(env)
+    return "{}:{}".format(*endpoint) if endpoint else LOCAL_RAFT_ADDRESS
+
+
+def ha_join_addresses(env):
+    return [a for a in env.get("OPENBAO_HA_JOIN_ADDRS", "").split(",") if a]
+
+
+def list_cluster_instances(exclude_self=True):
+    """Return the instances that accept members or joined an HA cluster.
+
+    Each item: module_id, node, ui_name, ha_cluster, ha_role, raft_node_id,
+    api_url, cluster_address, unseal_mode and the Transit settings (no
+    token: it never leaves its node).
+    """
+    try:
+        import agent
+        rdb = agent.redis_connect(use_replica=True)
+        records = agent.list_service_providers(rdb, CLUSTER_SERVICE, "tcp")
+    except Exception as ex:
+        log(f"Cannot list the OpenBao HA instances: {ex}", "<4>")
+        return []
+    instances = []
+    for rec in records:
+        if exclude_self and rec.get("module_id") == os.environ.get("MODULE_ID"):
+            continue
+        instances.append({
+            "module_id": rec.get("module_id", ""),
+            "node": rec.get("node", "") or "",
+            "ui_name": rec.get("ui_name", "") or "",
+            "ha_cluster": rec.get("ha_cluster", ""),
+            "ha_role": rec.get("ha_role", ""),
+            "raft_node_id": rec.get("raft_node_id", ""),
+            "api_url": rec.get("api_url", ""),
+            "cluster_address": "{}:{}".format(rec.get("host", ""), rec.get("port", "")),
+            "unseal_mode": rec.get("unseal_mode", ""),
+            "transit_address": rec.get("transit_address", ""),
+            "transit_mount": rec.get("transit_mount", ""),
+            "transit_key": rec.get("transit_key", ""),
+            "transit_tls_skip_verify": is_true(rec.get("transit_tls_skip_verify", "False")),
+        })
+    return sorted(instances, key=lambda i: (i["ha_cluster"], i["module_id"]))
+
+
+def raft_peers():
+    """Return the Raft peers [{node_id, address, leader, voter}] read with the
+    module token, or None if they cannot be read."""
+    token = read_module_token()
+    if not token:
+        return None
+    try:
+        response = api_request("sys/storage/raft/configuration", token=token)
+    except (urllib.error.URLError, OSError, ValueError) as ex:
+        log(f"Cannot read the Raft configuration: {ex}", "<4>")
+        return None
+    servers = (response.get("data") or {}).get("config", {}).get("servers", [])
+    return [{
+        "node_id": srv.get("node_id", ""),
+        "address": srv.get("address", ""),
+        "leader": bool(srv.get("leader")),
+        "voter": bool(srv.get("voter")),
+    } for srv in servers]
+
+
+def ha_leader_status():
+    """Return the unauthenticated sys/leader payload, or None."""
+    try:
+        return api_get("sys/leader", timeout=5)
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
+def write_raft_recovery(env):
+    """Make the Raft data a single-node cluster at raft_address(env).
+
+    OpenBao's documented outage recovery: with the server stopped, a
+    raft/peers.json file replaces the Raft configuration at the next start.
+    It moves a standalone instance's own entry from loopback to the node
+    VPN address when it becomes a primary (no member can have joined yet),
+    back to loopback when a primary without members returns standalone,
+    and detaches a restored or cloned HA instance from its old cluster.
+    The previous Raft files are copied to raft.bak-<timestamp> first.
+    Return True if the file was written, False if there is no Raft data.
+    """
+    proc = subprocess.run(
+        ["podman", "volume", "inspect", "--format", "{{.Mountpoint}}", DATA_VOLUME],
+        capture_output=True, text=True, check=False,
+    )
+    if proc.returncode != 0:
+        return False
+    mountpoint = proc.stdout.strip()
+    raft_dir = os.path.join(mountpoint, "raft")
+    if subprocess.run(["podman", "unshare", "test", "-e", os.path.join(raft_dir, "raft.db")],
+                      check=False).returncode != 0:
+        return False
+    peers = json.dumps([{
+        "id": raft_node_id(env),
+        "address": raft_address(env),
+        "non_voter": False,
+    }]) + "\n"
+    backup = os.path.join(mountpoint, time.strftime("raft.bak-%Y%m%d-%H%M%S"))
+    # Files are owned by the container user: work in the user namespace and
+    # give peers.json the owner of the raft directory, which deletes it
+    # after the recovery.
+    subprocess.run(
+        ["podman", "unshare", "sh", "-c",
+         'cp -a "$1" "$2" && cat > "$1/peers.json" && chown --reference="$1" "$1/peers.json"'
+         ' && chmod 0600 "$1/peers.json"',
+         "raft-recovery", raft_dir, backup],
+        input=peers, text=True, check=True,
+    )
+    log(f"Raft recovery: node {raft_node_id(env)} at {raft_address(env)}; previous files in {os.path.basename(backup)}")
+    return True
+
+
 def auto_initialize_wanted(env):
     return (
-        env["OPENBAO_UNSEAL_MODE"] in ("auto", "transit")
+        ha_role(env) != "member"
+        and env["OPENBAO_UNSEAL_MODE"] in ("auto", "transit")
         and is_true(env["OPENBAO_AUTO_INITIALIZE"])
         and bool(env["OPENBAO_USER_DOMAIN"])
         and bool(env["OPENBAO_LDAP_ADMIN_GROUP"])
@@ -790,7 +960,8 @@ def render_config(env):
 
     static_part = []
     static_part.append(f"api_addr = {_hcl_string(api_addr)}")
-    static_part.append(f"cluster_addr = {_hcl_string(CLUSTER_ADDR)}")
+    cluster = cluster_endpoint(env)
+    static_part.append(f"cluster_addr = {_hcl_string('https://{}:{}'.format(*cluster) if cluster else CLUSTER_ADDR)}")
     static_part.append("ui = true")
     # Raft integrated storage: mlock is not needed and it is not available
     # to rootless containers.
@@ -798,12 +969,19 @@ def render_config(env):
     static_part.append("")
     static_part.append('storage "raft" {')
     static_part.append('  path    = "/openbao/file"')
-    static_part.append(f"  node_id = {_hcl_string(RAFT_NODE_ID)}")
+    static_part.append(f"  node_id = {_hcl_string(raft_node_id(env))}")
+    if ha_role(env) == "member":
+        # Used only until this instance has joined: then the Raft data
+        # holds the cluster membership.
+        for address in ha_join_addresses(env):
+            static_part.append("  retry_join {")
+            static_part.append(f"    leader_api_addr = {_hcl_string(address)}")
+            static_part.append("  }")
     static_part.append("}")
     static_part.append("")
     static_part.append('listener "tcp" {')
     static_part.append('  address         = "0.0.0.0:8200"')
-    static_part.append('  cluster_address = "127.0.0.1:8201"')
+    static_part.append(f'  cluster_address = "{"0.0.0.0" if cluster else "127.0.0.1"}:{CLUSTER_CONTAINER_PORT}"')
     static_part.append("  tls_disable     = true")
     static_part.append(f"  x_forwarded_for_authorized_addrs      = {_hcl_string(','.join(XFF_AUTHORIZED_ADDRS))}")
     static_part.append('  x_forwarded_for_reject_not_authorized = "false"')
@@ -899,6 +1077,8 @@ def render_config(env):
     vpn_api = vpn_api_endpoint(env)
     vpn_publish = f"--publish={vpn_api[0]}:{vpn_api[1]}:8200" if vpn_api else ""
     runtime_env_text += f"OPENBAO_PUBLISH_VPN_API={vpn_publish}\n"
+    cluster_publish = f"--publish={cluster[0]}:{cluster[1]}:{CLUSTER_CONTAINER_PORT}" if cluster else ""
+    runtime_env_text += f"OPENBAO_PUBLISH_CLUSTER={cluster_publish}\n"
     return {
         "runtime_env_text": runtime_env_text,
         "config_text": config_text,

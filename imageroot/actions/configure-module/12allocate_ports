@@ -6,28 +6,37 @@
 #
 
 #
-# The cluster network API listener uses the third module TCP port. Instances
-# installed by releases that demanded fewer ports allocate it here (role
-# node:portsadm); new instances already have it in TCP_PORTS.
+# The cluster network API listener uses the third module TCP port and the
+# high availability (Raft cluster) listener the fourth. Instances installed
+# by releases that demanded fewer ports allocate them here, only when the
+# feature is enabled (role node:portsadm); new instances already have them
+# in TCP_PORTS.
 #
 
+import json
 import sys
 import agent
 import openbao
 
 env = openbao.read_environment()
-if not openbao.vpn_api_enabled(env) or openbao.vpn_api_port(env):
-    sys.exit(0)
 
-try:
-    first, _ = agent.allocate_ports(1, "tcp", keep_existing=True)
-except Exception as ex:
-    print(agent.SD_ERR + f"Cannot allocate a TCP port for the cluster network API: {ex}", file=sys.stderr)
-    agent.set_status("validation-failed")
-    import json
-    json.dump([{"field": "vpn_api", "parameter": "vpn_api", "value": True,
-                "error": "vpn_api_port_unavailable"}], fp=sys.stdout)
-    sys.exit(3)
 
-agent.set_env("OPENBAO_VPN_API_PORT", str(first))
-print(f"Allocated TCP port {first} for the cluster network API", file=sys.stderr)
+def allocate(var, field, value, error):
+    try:
+        first, _ = agent.allocate_ports(1, "tcp", keep_existing=True)
+    except Exception as ex:
+        print(agent.SD_ERR + f"Cannot allocate a TCP port for {field}: {ex}", file=sys.stderr)
+        agent.set_status("validation-failed")
+        json.dump([{"field": field, "parameter": field, "value": value, "error": error}], fp=sys.stdout)
+        sys.exit(3)
+    agent.set_env(var, str(first))
+    env[var] = str(first)
+    print(f"Allocated TCP port {first} for {field}", file=sys.stderr)
+
+
+if openbao.vpn_api_enabled(env) and not openbao.vpn_api_port(env):
+    allocate("OPENBAO_VPN_API_PORT", "vpn_api", True, "vpn_api_port_unavailable")
+
+role = openbao.ha_role(env)
+if role != "standalone" and not openbao.cluster_port(env):
+    allocate("OPENBAO_CLUSTER_PORT", "ha_role", role, "ha_port_unavailable")

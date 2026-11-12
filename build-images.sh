@@ -50,7 +50,7 @@ buildah add "${container}" ui/dist /ui
 # - core 3.13+ provides agent.set_route() and agent.get_route()
 buildah config --entrypoint=/ \
     --label="org.nethserver.authorizations=traefik@node:routeadm cluster:accountconsumer node:portsadm" \
-    --label="org.nethserver.tcp-ports-demand=3" \
+    --label="org.nethserver.tcp-ports-demand=4" \
     --label="org.nethserver.rootfull=0" \
     --label="org.nethserver.min-core=3.13.0" \
     --label="org.nethserver.images=docker.io/openbao/openbao:2.7.2 ghcr.io/openbao/openbao-plugin-auth-ldap:v0.2.0" \

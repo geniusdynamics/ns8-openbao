@@ -13,6 +13,15 @@
 #
 # The key is removed when the cluster network API is disabled.
 #
+# An instance with high availability enabled (primary or member) is also
+# published as "openbao-cluster", so a new instance can discover it and
+# join its Raft cluster:
+#
+#   agent.list_service_providers(rdb, "openbao-cluster", "tcp")
+#
+# The record holds only non-secret settings: the Transit token never
+# leaves its node.
+#
 
 import json
 import os
@@ -35,6 +44,29 @@ try:
         })
     else:
         rdb.delete(key)
+    cluster_key = f"module/{module_id}/srv/tcp/{openbao.CLUSTER_SERVICE}"
+    cluster = openbao.cluster_endpoint(env)
+    if cluster:
+        rdb.delete(cluster_key)
+        rdb.hset(cluster_key, mapping={
+            "host": cluster[0],
+            "port": str(cluster[1]),
+            "api_url": f"http://{endpoint[0]}:{endpoint[1]}" if endpoint else "",
+            "ha_cluster": env["OPENBAO_HA_CLUSTER"],
+            "ha_role": openbao.ha_role(env),
+            "raft_node_id": openbao.raft_node_id(env),
+            "unseal_mode": env["OPENBAO_UNSEAL_MODE"],
+            "transit_address": env["OPENBAO_TRANSIT_ADDRESS"],
+            "transit_mount": env["OPENBAO_TRANSIT_MOUNT"],
+            "transit_key": env["OPENBAO_TRANSIT_KEY"],
+            "transit_tls_skip_verify": str(openbao.is_true(env["OPENBAO_TRANSIT_TLS_SKIP_VERIFY"])),
+        })
+    else:
+        rdb.delete(cluster_key)
+    rdb.publish(f"module/{module_id}/event/{openbao.CLUSTER_SERVICE}-changed", json.dumps({
+        "module_id": module_id,
+        "module_uuid": os.environ.get("MODULE_UUID", ""),
+    }))
     # Event named after the service, as by NS8 convention
     rdb.publish(f"module/{module_id}/event/openbao-changed", json.dumps({
         "module_id": module_id,

@@ -33,7 +33,16 @@ for evar in [
         "OPENBAO_TRANSIT_TLS_SKIP_VERIFY",
         "OPENBAO_PUBLIC_ACCESS",
         "OPENBAO_SNAPSHOT_KEEP",
+        # Stored in the Raft data: it must not change
+        "OPENBAO_RAFT_NODE_ID",
     ]:
     value = original_environment.get(evar, openbao.DEFAULTS.get(evar))
     if value is not None:
         agent.set_env(evar, value)
+
+# The high availability role is not restored: the instance comes back as a
+# standalone, single-node OpenBao. Data of an HA instance still lists the
+# other Raft peers, which would leave it without a quorum: rewrite its Raft
+# configuration as a single node before the first start.
+if original_environment.get("OPENBAO_HA_ROLE", "standalone") in ("primary", "member"):
+    agent.set_env("OPENBAO_RAFT_RECOVER", "True")

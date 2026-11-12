@@ -48,6 +48,13 @@ config = {
     "transit_key": env["OPENBAO_TRANSIT_KEY"],
     "transit_tls_skip_verify": openbao.is_true(env["OPENBAO_TRANSIT_TLS_SKIP_VERIFY"]),
     "transit_token_present": os.path.exists(openbao.TRANSIT_TOKEN_FILE),
+    "ha_role": openbao.ha_role(env),
+    "ha_join": env["OPENBAO_HA_JOIN"],
+    "ha_cluster": env["OPENBAO_HA_CLUSTER"],
+    "raft_node_id": openbao.raft_node_id(env),
+    "raft_address": openbao.raft_address(env),
+    # Other OpenBao instances with high availability enabled, to join
+    "ha_candidates": openbao.list_cluster_instances(),
     # Read-only information for the Settings page. Only names: the bind
     # credentials and the smarthost password are never returned.
     "user_domains": openbao.list_user_domains(),

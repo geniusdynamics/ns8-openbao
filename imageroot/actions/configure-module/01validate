@@ -38,10 +38,54 @@ def storage_state():
     return _storage_state
 
 
+# High availability (experimental). A member takes the seal of the
+# instance it joins: every member of a Raft cluster must use the same seal.
+current_role = openbao.ha_role(env)
+role = request.get("ha_role", current_role)
+join = request.get("ha_join", env["OPENBAO_HA_JOIN"]) if role == "member" else ""
+target = None
+if role == "member":
+    if not join:
+        fail("ha_join", join, "ha_join_required")
+    else:
+        target = next((i for i in openbao.list_cluster_instances() if i["module_id"] == join), None)
+        if target is None:
+            fail("ha_join", join, "ha_join_not_found")
+        elif not target["api_url"]:
+            fail("ha_join", join, "ha_join_no_api")
+        elif target["unseal_mode"] not in ("manual", "transit"):
+            fail("ha_join", join, "ha_requires_shared_seal")
+        elif target["unseal_mode"] == "transit" and not os.path.exists(openbao.TRANSIT_TOKEN_FILE):
+            fail("ha_join", join, "transit_token_missing")
+    if request.get("auto_initialize", False):
+        fail("auto_initialize", True, "auto_initialize_not_for_members")
+
 # The seal type is written in the OpenBao storage at initialization time.
 # Switching it afterwards requires a manual seal migration.
 current_mode = env["OPENBAO_UNSEAL_MODE"]
 requested_mode = request.get("unseal_mode", current_mode)
+if target:
+    requested_mode = target["unseal_mode"]
+if role == "primary" and requested_mode not in ("manual", "transit"):
+    # Members could unseal only with a copy of the static key file
+    fail("ha_role", role, "ha_requires_shared_seal")
+
+if role != current_role or (role == "member" and join != env["OPENBAO_HA_JOIN"]):
+    if "member" in (role, current_role):
+        # A member joins with empty storage; it can leave only if it never
+        # joined. A joined member is removed with its module.
+        if storage_state() != "uninitialized":
+            fail("ha_role", role, "ha_member_requires_uninitialized"
+                 if storage_state() == "initialized" else "ha_cannot_verify_storage")
+    elif storage_state() == "unknown":
+        # Moving between standalone and primary rewrites the Raft address
+        fail("ha_role", role, "ha_cannot_verify_storage")
+    if current_role == "primary" and role != "primary" and storage_state() == "initialized":
+        peers = openbao.raft_peers()
+        if peers is None:
+            fail("ha_role", role, "ha_cannot_verify_peers")
+        elif any(p["node_id"] != openbao.raft_node_id(env) for p in peers):
+            fail("ha_role", role, "ha_primary_has_members")
 if requested_mode != current_mode and storage_state() != "uninitialized":
     fail("unseal_mode", requested_mode,
          "unseal_mode_locked" if storage_state() == "initialized" else "unseal_mode_cannot_verify")
@@ -102,7 +146,7 @@ vpn_api = request.get("vpn_api", openbao.vpn_api_enabled(env))
 if not public and not vpn_api:
     fail("public_access", False, "public_access_requires_vpn_api")
 
-if requested_mode == "transit":
+if requested_mode == "transit" and not target:
     if not request.get("transit_address", env["OPENBAO_TRANSIT_ADDRESS"]):
         fail("transit_address", "", "transit_address_required")
     if not request.get("transit_key", env["OPENBAO_TRANSIT_KEY"]):

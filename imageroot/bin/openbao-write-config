@@ -6,19 +6,24 @@
 #
 
 #
-# Generate the OpenBao server configuration from the module environment.
-# It runs as ExecStartPre of openbao.service, so the configuration is always
-# consistent with the environment after updates, restores and clones.
+# ExecStartPre of openbao.service: write the OpenBao configuration and,
+# when requested by configure-module, restore or clone (OPENBAO_RAFT_RECOVER),
+# rewrite the Raft configuration as a single node with peers.json while the
+# server is stopped.
 #
 
 import sys
+import agent
 import openbao
 
 try:
+    env = openbao.read_environment()
+    if openbao.is_true(env.get("OPENBAO_RAFT_RECOVER", "False")):
+        openbao.write_raft_recovery(env)
+        agent.unset_env("OPENBAO_RAFT_RECOVER")
     # The server is about to start: it loads exactly this configuration
     openbao.mark_applied(openbao.write_config())
 except Exception as ex:
     print(f"<3>Cannot write the OpenBao configuration: {ex}", file=sys.stderr)
     sys.exit(1)
-
 print("OpenBao configuration written", file=sys.stderr)

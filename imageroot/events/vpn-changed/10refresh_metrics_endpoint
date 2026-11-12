@@ -27,6 +27,13 @@ if current == expected:
     sys.exit(0)
 
 print("<5>Cluster network endpoints changed: restarting OpenBao", file=sys.stderr)
+env = openbao.read_environment()
+if openbao.ha_role(env) != "standalone":
+    # The Raft data still holds the previous address of this node: the
+    # other members cannot reach it until it is updated (see
+    # docs/high-availability.md, "Changing a member address").
+    print(f"<4>High availability: the Raft address of node {openbao.raft_node_id(env)} "
+          f"is now {openbao.raft_address(env)}: update it in the Raft cluster", file=sys.stderr)
 subprocess.run(["systemctl", "--user", "try-restart", "openbao.service"], check=False)
 subprocess.run(["openbao-publish-metrics-target"], check=False)
 subprocess.run(["openbao-publish-service"], check=False)
