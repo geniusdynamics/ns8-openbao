@@ -1,0 +1,72 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# Recover an instance whose automatic initialization failed, for example
+# a 1.0.0 instance: OpenBao 2.7 no longer bundles the LDAP auth method, the
+# self-initialization stopped at its first request and OpenBao now logs
+# "self-initialization failed: refusing to unseal" at every start.
+#
+# Such an instance never became usable: the root token was never shown
+# and no administrator could log in, so its storage holds no secrets. This
+# command wipes that storage and restarts OpenBao, which initializes itself
+# again with the current configuration:
+#
+#   runagent -m openbao1 openbao-reset-failed-init
+#
+# It refuses to run unless OpenBao uses automatic unseal, is initialized
+# but sealed, and its log shows the self-initialization failure.
+#
+
+import subprocess
+import sys
+import openbao
+
+FAILURE = "self-initialization failed"
+assume_yes = "--yes" in sys.argv
+
+env = openbao.read_environment()
+if env["OPENBAO_UNSEAL_MODE"] != "auto":
+    sys.exit("Only instances with automatic unseal initialize themselves: nothing to do")
+
+status = openbao.get_seal_status()
+if not status:
+    sys.exit("OpenBao is not answering: start it with 'systemctl --user start openbao.service' and retry")
+if not status.get("initialized") or not status.get("sealed"):
+    sys.exit("OpenBao is not stuck after a failed self-initialization: nothing to do")
+
+logs = subprocess.run(
+    ["podman", "logs", "--tail", "2000", "openbao"],
+    capture_output=True, text=True, check=False,
+)
+if FAILURE not in logs.stdout + logs.stderr:
+    sys.exit(f"The OpenBao log does not show \"{FAILURE}\": refusing to wipe the storage")
+
+if not openbao.auto_initialize_wanted(env):
+    print("Warning: automatic initialization is not configured: after the reset "
+          "OpenBao waits to be initialized from its web UI.", file=sys.stderr)
+
+if not assume_yes:
+    answer = input("Wipe the OpenBao storage of this failed initialization? Type 'yes': ")
+    if answer.strip().lower() != "yes":
+        sys.exit("Nothing changed")
+
+subprocess.run(["systemctl", "--user", "stop", "openbao.service"], check=True)
+mountpoint = subprocess.run(
+    ["podman", "volume", "inspect", "--format", "{{.Mountpoint}}", openbao.DATA_VOLUME],
+    capture_output=True, text=True, check=True,
+).stdout.strip()
+# Files are owned by the container user: delete them in the user namespace
+subprocess.run(["podman", "unshare", "find", mountpoint, "-mindepth", "1", "-delete"], check=True)
+print("OpenBao storage wiped: starting OpenBao", file=sys.stderr)
+subprocess.run(["systemctl", "--user", "start", "openbao.service"], check=True)
+
+after = openbao.get_seal_status()
+if after and after.get("initialized") and not after.get("sealed"):
+    print("OpenBao initialized itself and is unsealed.")
+else:
+    print("OpenBao restarted: check its state in the Status page.")
