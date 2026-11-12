@@ -1,0 +1,1 @@
+{"$schema":"http://json-schema.org/draft-07/schema#","title":"send-test-email output","$id":"http://schema.nethserver.org/openbao/send-test-email-output.json","description":"Recipients of the test email","examples":[{"recipients":["security@example.org"]}],"type":"object","required":["recipients"],"properties":{"recipients":{"type":"array","items":{"type":"string"}}}}
