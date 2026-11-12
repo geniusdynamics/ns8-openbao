@@ -73,6 +73,20 @@
           @action="showWizard"
           :showCloseButton="false"
         />
+        <NsCodeSnippet
+          v-if="
+            openbao.ui_url &&
+            openbao.reachable &&
+            !openbao.initialized &&
+            !openbao.auto_initialize
+          "
+          :copyTooltip="$t('settings.copy_to_clipboard')"
+          :copy-feedback="$t('settings.copied_to_clipboard')"
+          :feedback-aria-label="$t('settings.copied_to_clipboard')"
+          hideExpandButton
+          class="init-command"
+          >{{ initCommand }}</NsCodeSnippet
+        >
       </cv-column>
     </cv-row>
     <cv-row v-if="openbao.seal_migration_from">
@@ -205,6 +219,34 @@
                 @click="goToAppPage(instanceName, 'settings')"
               >
                 {{ $t("status.configure") }}
+              </NsButton>
+            </div>
+          </template>
+        </NsInfoCard>
+      </cv-column>
+    </cv-row>
+    <cv-row>
+      <cv-column :md="4" :max="4">
+        <NsInfoCard
+          light
+          :title="
+            $tc('status.plugins_installed', (openbao.plugins || []).length, {
+              count: (openbao.plugins || []).length,
+            })
+          "
+          :description="$t('status.plugins_description')"
+          :icon="Plug32Icon"
+          :loading="loading.getOpenbaoStatus"
+          class="min-height-card"
+        >
+          <template slot="content">
+            <div class="card-actions">
+              <NsButton
+                kind="ghost"
+                :icon="ArrowRight20"
+                @click="goToAppPage(instanceName, 'plugins')"
+              >
+                {{ $t("status.manage_plugins") }}
               </NsButton>
             </div>
           </template>
@@ -475,6 +517,7 @@ import Password32 from "@carbon/icons-vue/es/password/32";
 import SetupWizard from "@/components/SetupWizard";
 import Group32 from "@carbon/icons-vue/es/group/32";
 import Network32 from "@carbon/icons-vue/es/network--3/32";
+import Plug32 from "@carbon/icons-vue/es/plug/32";
 
 export default {
   name: "Status",
@@ -498,6 +541,7 @@ export default {
       Password32Icon: Password32,
       Group32Icon: Group32,
       Network32Icon: Network32,
+      Plug32Icon: Plug32,
       isRedirectChecked: false,
       redirectTimeout: 0,
       status: {
@@ -523,6 +567,8 @@ export default {
         migration: false,
         ui_url: "",
         ha: null,
+        plugins: [],
+        auto_initialize: false,
       },
       isOpenbaoStatusLoaded: false,
       isWizardShown: false,
@@ -591,6 +637,9 @@ export default {
       }
       return this.$t("status.openbao_server");
     },
+    initCommand() {
+      return `runagent -m ${this.instanceName} openbao-init`;
+    },
     haDescription() {
       const ha = this.openbao.ha;
       if (!ha || ha.is_self === null) {
@@ -621,10 +670,9 @@ export default {
         return {
           kind: "warning",
           title: this.$t("status.initialize_title"),
-          description:
-            ob.unseal_mode === "auto"
-              ? this.$t("status.initialize_description_auto")
-              : this.$t("status.initialize_description"),
+          description: ["auto", "transit"].includes(ob.unseal_mode)
+            ? this.$t("status.initialize_description_auto")
+            : this.$t("status.initialize_description"),
         };
       } else if (ob.sealed) {
         return {
@@ -943,5 +991,9 @@ export default {
 
 .ha-hint {
   color: $text-02;
+}
+
+.init-command {
+  margin-bottom: $spacing-05;
 }
 </style>

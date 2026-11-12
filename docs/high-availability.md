@@ -1,11 +1,68 @@
-# High availability: design decisions
+# High availability
+
+Part of the [ns8-openbao documentation](../README.md#documentation).
+
+## Using high availability
+
+**Experimental.** Several OpenBao instances, normally on different nodes,
+can form one Raft cluster: one instance is active, the others are
+standbys that forward requests to it and take over if it stops. A single
+instance works exactly as before: nothing changes until a role is chosen.
+The design decisions and limits are below.
+
+1. On the existing instance, *Settings*, *High availability*: choose
+   **Accept members** (`"ha_role": "primary"`). It needs manual or Transit
+   unseal. OpenBao restarts (unseal it again with manual unseal); if it is
+   initialized, its Raft address moves from loopback to the node VPN
+   address, keeping a copy of the previous Raft files.
+2. Install a new instance on another node and, in its setup wizard,
+   choose **Join an existing OpenBao** and the instance from the list
+   (`"ha_role": "member", "ha_join": "openbao1"`). The list comes from the
+   NS8 service discovery (`openbao-cluster` service providers).
+3. Manual unseal: unseal the new instance with the unseal keys of the
+   cluster; it completes the join when unsealed. Transit unseal: store the
+   Transit token on the new node first (`openbao-transit-token`); the
+   member unseals itself.
+4. Repeat for a third instance: a Raft cluster works while a majority of
+   its members runs, so 2 instances stop if either one stops.
+
+```bash
+api-cli run configure-module --agent module/openbao1 --data '{"host": "vault1.example.org", "ha_role": "primary"}'
+api-cli run configure-module --agent module/openbao2 --data '{"host": "vault2.example.org", "ha_role": "member", "ha_join": "openbao1"}'
+```
+
+The *Status* page shows the role, the active node and, with the module
+token, the Raft members.
+
+**Removing a member**: first remove its peer from the cluster with an
+administrator token, then remove its application. Removing a member
+application without removing its peer leaves the cluster counting a
+missing voter:
+
+```bash
+bao operator raft remove-peer openbao2
+```
+
+**Back to standalone**: a primary returns standalone only when it is the
+last Raft member. A member that joined cannot leave by configuration
+(its data belongs to the cluster): remove its peer and its application.
+
+**Backups and restore**: take backups of the primary, which has the
+module token for consistent snapshots. A restored or cloned instance
+always comes back standalone: its Raft configuration is rewritten as a
+single node before its first start.
+
+**Updates**: update the standby instances first and the active one last,
+as OpenBao recommends.
+
+## Design decisions
 
 Status: **experimental**. Single-node tests run in CI, including a real
 join of two instances on the same node through the node VPN address
 (`tests/50_openbao_ha.robot`). Multi-node behaviour (node loss, leader
 change, rejoin) is verified manually on real clusters.
 
-## Goals
+### Goals
 
 - **Nothing changes for a single instance.** Every 1.x install, and every
   new install that does not choose a role, is a standalone single-node
@@ -17,7 +74,7 @@ change, rejoin) is verified manually on real clusters.
   for 8 hours, readable by all modules. Joining needs no token; the seal
   key or token never leaves its node.
 
-## Roles
+### Roles
 
 | Role | Raft node ID | Cluster address | Published |
 |---|---|---|---|
@@ -25,7 +82,7 @@ change, rejoin) is verified manually on real clusters.
 | `primary` (accepts members) | `ns8-openbao` | `<node VPN IP>:<4th TCP port>` | cluster port and cluster network API on the VPN address |
 | `member` | its module ID | `<node VPN IP>:<4th TCP port>` | cluster port on the VPN address |
 
-### Node IDs
+#### Node IDs
 
 The Raft node ID is stored in the Raft data and never changes.
 
@@ -39,7 +96,7 @@ The Raft node ID is stored in the Raft data and never changes.
 - Restore and clone copy `OPENBAO_RAFT_NODE_ID`, because it must match the
   data.
 
-### Cluster address: the one risky step
+#### Cluster address: the one risky step
 
 A standalone instance's own Raft entry holds `127.0.0.1:8201`. Raft
 identifies the local server by ID, so a single node keeps electing itself,
@@ -60,7 +117,7 @@ standalone. That is allowed only when the module token shows it is the
 last Raft member. It also detaches a restored or cloned HA instance from
 its old cluster.
 
-## Discovery: NS8 service providers
+### Discovery: NS8 service providers
 
 As other modules do (for example Webtop discovering Mail), an HA instance
 publishes a service provider record:
@@ -81,7 +138,7 @@ and the event `openbao-cluster-changed`.
   Settings page and the wizard list them.
 - Consumers use `agent.list_service_providers(rdb, "openbao-cluster", "tcp")`.
 
-## Joining
+### Joining
 
 - A member is configured with `ha_role: member` and `ha_join: <module ID>`.
 - `configure-module` stores the `api_url` of every instance of that
@@ -99,7 +156,7 @@ and the event `openbao-cluster-changed`.
 - Joining is allowed only on an uninitialized instance: the join replaces
   its storage. A member never initializes itself.
 
-## Ports
+### Ports
 
 - The fourth module TCP port is the cluster listener; `tcp-ports-demand`
   is 4.
@@ -110,7 +167,7 @@ and the event `openbao-cluster-changed`.
   the node VPN address, which the cluster VPN protects. Raft and request
   forwarding use mutual TLS managed by OpenBao.
 
-## Lifecycle rules
+### Lifecycle rules
 
 | Change | Allowed when |
 |---|---|
@@ -120,7 +177,7 @@ and the event `openbao-cluster-changed`.
 | member → standalone | the member never joined (not initialized) |
 | joined member leaves | not by configuration: remove its peer (`bao operator raft remove-peer <module id>`, administrator token), then remove its application |
 
-## Backups, restore, clone
+### Backups, restore, clone
 
 - Backups of the primary contain a consistent Raft snapshot (module
   token). Members have no module token and back up their data volume.
@@ -129,7 +186,7 @@ and the event `openbao-cluster-changed`.
   a single node with the original node ID. Clone also drops the ports
   allocated to the original instance.
 
-## Known limits
+### Known limits
 
 - **Quorum**: 2 members tolerate no failure; use 3.
 - **Removing a member** needs an administrator token on the cluster, which

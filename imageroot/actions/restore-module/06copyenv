@@ -33,6 +33,7 @@ for evar in [
         "OPENBAO_TRANSIT_TLS_SKIP_VERIFY",
         "OPENBAO_PUBLIC_ACCESS",
         "OPENBAO_SNAPSHOT_KEEP",
+        "OPENBAO_PLUGINS",
         # Stored in the Raft data: it must not change
         "OPENBAO_RAFT_NODE_ID",
     ]:

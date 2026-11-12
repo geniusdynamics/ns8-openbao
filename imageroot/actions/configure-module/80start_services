@@ -20,6 +20,9 @@ def systemctl(*args):
     agent.run_helper("systemctl", "--user", *args).check_returncode()
 
 
+# Enabled catalog plugins whose image is missing, for example after a
+# restore, a clone or a module update that pins a new version
+openbao.pull_plugin_images(openbao.enabled_plugins(openbao.read_environment()))
 openbao.install_plugins()
 record = openbao.write_config()
 status = openbao.get_seal_status()
