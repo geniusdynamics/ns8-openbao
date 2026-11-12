@@ -83,6 +83,29 @@
               :showCloseButton="false"
               class="maxwidth"
             />
+            <NsToggle
+              value="vpnApi"
+              :label="$t('settings.vpn_api')"
+              v-model="isVpnApiEnabled"
+              :disabled="isFormDisabled"
+              class="mg-bottom"
+            >
+              <template slot="tooltip">{{
+                $t("settings.vpn_api_helper")
+              }}</template>
+              <template slot="text-left">{{
+                $t("settings.disabled")
+              }}</template>
+              <template slot="text-right">{{
+                $t("settings.enabled")
+              }}</template>
+            </NsToggle>
+            <p
+              v-if="isVpnApiEnabled && savedConfig && savedConfig.vpn_api_url"
+              class="section-description"
+            >
+              {{ $t("settings.vpn_api_url", { url: savedConfig.vpn_api_url }) }}
+            </p>
             <!-- unseal -->
             <h4 class="section-title">{{ $t("settings.section_unseal") }}</h4>
             <cv-radio-group
@@ -109,7 +132,75 @@
               <p class="radio-description">
                 {{ $t("settings.unseal_mode_auto_description") }}
               </p>
+              <cv-radio-button
+                :label="$t('settings.unseal_mode_transit')"
+                value="transit"
+                v-model="unsealMode"
+                :disabled="isFormDisabled || isUnsealModeLocked"
+              />
+              <p class="radio-description">
+                {{ $t("settings.unseal_mode_transit_description") }}
+              </p>
             </cv-radio-group>
+            <div v-if="unsealMode === 'transit'" class="maxwidth mg-bottom">
+              <NsTextInput
+                :label="$t('settings.transit_address')"
+                placeholder="https://kms.example.org:8200"
+                v-model.trim="transitAddress"
+                :invalid-message="error.transit_address"
+                :disabled="isFormDisabled || isUnsealModeLocked"
+                class="mg-bottom"
+                ref="transit_address"
+              />
+              <NsTextInput
+                :label="$t('settings.transit_mount')"
+                placeholder="transit"
+                v-model.trim="transitMount"
+                :disabled="isFormDisabled || isUnsealModeLocked"
+                class="mg-bottom"
+              />
+              <NsTextInput
+                :label="$t('settings.transit_key')"
+                v-model.trim="transitKey"
+                :invalid-message="error.transit_key"
+                :disabled="isFormDisabled || isUnsealModeLocked"
+                class="mg-bottom"
+                ref="transit_key"
+              />
+              <NsToggle
+                value="transitTlsSkipVerify"
+                :label="$t('settings.transit_tls_skip_verify')"
+                v-model="isTransitTlsSkipVerify"
+                :disabled="isFormDisabled || isUnsealModeLocked"
+                class="mg-bottom"
+              >
+                <template slot="text-left">{{
+                  $t("settings.disabled")
+                }}</template>
+                <template slot="text-right">{{
+                  $t("settings.enabled")
+                }}</template>
+              </NsToggle>
+              <template
+                v-if="savedConfig && !savedConfig.transit_token_present"
+              >
+                <NsInlineNotification
+                  kind="warning"
+                  :title="$t('settings.transit_token_missing_title')"
+                  :description="
+                    $t('settings.transit_token_missing_description')
+                  "
+                  :showCloseButton="false"
+                />
+                <NsCodeSnippet
+                  :copyTooltip="$t('settings.copy_to_clipboard')"
+                  :copy-feedback="$t('settings.copied_to_clipboard')"
+                  :feedback-aria-label="$t('settings.copied_to_clipboard')"
+                  hideExpandButton
+                  >{{ transitTokenCommand }}</NsCodeSnippet
+                >
+              </template>
+            </div>
             <NsInlineNotification
               v-if="isUnsealModeLocked"
               kind="info"
@@ -442,6 +533,11 @@ export default {
       groupPolicyKey: 0,
       starterKits: ["kv"],
       starterKitList: ["kv", "pki", "approle"],
+      isVpnApiEnabled: false,
+      transitAddress: "",
+      transitMount: "transit",
+      transitKey: "",
+      isTransitTlsSkipVerify: false,
       isAdvancedOpen: false,
       savedConfig: null,
       openbaoStatus: null,
@@ -467,6 +563,9 @@ export default {
         notify_recipients: "",
         ip_allowlist: "",
         ldap_group_policies: "",
+        transit_address: "",
+        transit_key: "",
+        vpn_api: "",
       },
     };
   },
@@ -507,11 +606,14 @@ export default {
         .filter((row) => row.group && row.policy)
         .map((row) => ({ group: row.group.trim(), policy: row.policy.trim() }));
     },
+    transitTokenCommand() {
+      return `runagent -m ${this.instanceName} openbao-transit-token`;
+    },
     canAutoInitialize() {
       // self-initialization needs an auto-unseal mechanism and an
       // uninitialized server
       return (
-        this.unsealMode === "auto" &&
+        ["auto", "transit"].includes(this.unsealMode) &&
         !(this.openbaoStatus && this.openbaoStatus.initialized)
       );
     },
@@ -604,6 +706,11 @@ export default {
       this.isAutoInitializeEnabled = config.auto_initialize;
       this.notifyRecipients = config.notify_recipients.join(", ");
       this.ipAllowlistText = config.ip_allowlist.join("\n");
+      this.isVpnApiEnabled = config.vpn_api;
+      this.transitAddress = config.transit_address;
+      this.transitMount = config.transit_mount || "transit";
+      this.transitKey = config.transit_key;
+      this.isTransitTlsSkipVerify = config.transit_tls_skip_verify;
       this.starterKits = [...config.starter_kits];
       this.groupPolicies = config.ldap_group_policies.map((m) => ({
         key: this.groupPolicyKey++,
@@ -800,6 +907,11 @@ export default {
               ? this.completeGroupPolicies
               : [],
             starter_kits: this.starterKits,
+            vpn_api: this.isVpnApiEnabled,
+            transit_address: this.transitAddress,
+            transit_mount: this.transitMount,
+            transit_key: this.transitKey,
+            transit_tls_skip_verify: this.isTransitTlsSkipVerify,
           },
           extra: {
             title: this.$t("settings.configure_instance", {

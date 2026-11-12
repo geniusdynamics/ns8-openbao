@@ -1,0 +1,11 @@
+#!/bin/bash
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+exec 1>&2
+
+# Service discovery is useful but not essential: never block the configuration
+openbao-publish-service || echo "<4>Cannot publish the service provider record"

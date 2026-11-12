@@ -20,7 +20,13 @@
 set -e
 exec 1>&2
 
-rm -f openbao-data.tar
+rm -f openbao-data.tar openbao.snap
+
+# A Raft snapshot is a consistent copy taken without stopping OpenBao. It
+# needs the module token (openbao-module-token) and an unsealed server.
+if runagent openbao-snapshot; then
+    echo "Raft snapshot saved to openbao.snap"
+fi
 
 if [[ "${OPENBAO_UNSEAL_MODE:-manual}" != "auto" ]]; then
     echo "Manual unseal mode: the OpenBao data volume is saved while the service is running"

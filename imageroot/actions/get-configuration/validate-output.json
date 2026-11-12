@@ -42,7 +42,14 @@
                 "ns8-pki-issuer",
                 "ns8-secrets-ro",
                 "ns8-secrets-rw"
-            ]
+            ],
+            "vpn_api": false,
+            "vpn_api_url": "",
+            "transit_address": "",
+            "transit_mount": "transit",
+            "transit_key": "",
+            "transit_tls_skip_verify": false,
+            "transit_token_present": false
         }
     ],
     "type": "object",
@@ -62,7 +69,14 @@
         "ip_allowlist",
         "ldap_group_policies",
         "starter_kits",
-        "builtin_policies"
+        "builtin_policies",
+        "vpn_api",
+        "vpn_api_url",
+        "transit_address",
+        "transit_mount",
+        "transit_key",
+        "transit_tls_skip_verify",
+        "transit_token_present"
     ],
     "properties": {
         "host": {
@@ -95,7 +109,8 @@
             "type": "string",
             "enum": [
                 "manual",
-                "auto"
+                "auto",
+                "transit"
             ]
         },
         "user_domain": {
@@ -188,6 +203,29 @@
                 "type": "string"
             },
             "description": "Policies created by the module"
+        },
+        "vpn_api": {
+            "type": "boolean"
+        },
+        "vpn_api_url": {
+            "type": "string",
+            "description": "Cluster network API URL; empty if disabled"
+        },
+        "transit_address": {
+            "type": "string"
+        },
+        "transit_mount": {
+            "type": "string"
+        },
+        "transit_key": {
+            "type": "string"
+        },
+        "transit_tls_skip_verify": {
+            "type": "boolean"
+        },
+        "transit_token_present": {
+            "type": "boolean",
+            "description": "The Transit seal token was stored with openbao-transit-token"
         }
     }
 }

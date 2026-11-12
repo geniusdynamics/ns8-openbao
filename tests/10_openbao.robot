@@ -157,6 +157,58 @@ Check if openbao-apply-config applies the starter kits with a token
     &{policy} =    Bao Request    ${HOST}    GET    sys/policies/acl/ns8-secrets-ro    ${EMPTY}    ${root_token}
     Should Contain    ${policy.data.policy}    secret/data
 
+Check if the module token can be created with an administrator token
+    ${output}  ${rc} =    Execute Command    runagent -m ${module_id} env BAO_TOKEN=${root_token} openbao-module-token create
+    ...    return_rc=True
+    Should Be Equal As Integers    ${rc}  0
+    ${output}  ${rc} =    Execute Command    runagent -m ${module_id} openbao-module-token status
+    ...    return_rc=True
+    Should Be Equal    ${output}    valid
+
+Check if an active root token is detected
+    ${output}  ${rc} =    Execute Command    api-cli run module/${module_id}/get-openbao-status
+    ...    return_rc=True
+    Should Be Equal As Integers    ${rc}  0
+    &{status} =    Evaluate    json.loads('''${output}''')    modules=json
+    Should Be Equal    ${status.module_token}    valid
+    Should Be Equal    ${status.root_token_present}    ${True}
+    ${output}  ${rc} =    Execute Command    runagent -m ${module_id} env BAO_TOKEN=${root_token} openbao-root-tokens
+    ...    return_rc=True
+    Should Be Equal As Integers    ${rc}  0
+    Should Contain    ${output}    root token accessor=
+
+Check if backups include a consistent Raft snapshot
+    ${rc} =    Execute Command    runagent -m ${module_id} module-dump-state
+    ...    return_rc=True  return_stdout=False
+    Should Be Equal As Integers    ${rc}  0
+    ${rc} =    Execute Command    runagent -m ${module_id} test -s openbao.snap
+    ...    return_rc=True  return_stdout=False
+    Should Be Equal As Integers    ${rc}  0
+    &{status} =    Seal Status    ${HOST}
+    Should Be Equal    ${status.sealed}    ${False}
+    ${rc} =    Execute Command    runagent -m ${module_id} module-cleanup-state
+    ...    return_rc=True  return_stdout=False
+    Should Be Equal As Integers    ${rc}  0
+
+Check if the API can be published on the cluster network
+    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host": "${HOST}", "http2https": false, "vpn_api": true}'
+    ...    return_rc=True  return_stdout=False
+    Should Be Equal As Integers    ${rc}  0
+    ${url}  ${rc} =    Execute Command    redis-cli HGET module/${module_id}/srv/http/openbao url
+    ...    return_rc=True
+    Should Be Equal As Integers    ${rc}  0
+    Should Start With    ${url}    http://
+    Wait Until Keyword Succeeds    60s    2s    Execute Command And Expect Success    curl -sS -f ${url}/v1/sys/seal-status
+    Unseal OpenBao    ${HOST}    ${unseal_key}
+    Wait Until Keyword Succeeds    30s    2s    OpenBao Should Be Active    ${HOST}
+    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host": "${HOST}", "http2https": false, "vpn_api": false}'
+    ...    return_rc=True  return_stdout=False
+    Should Be Equal As Integers    ${rc}  0
+    ${output} =    Execute Command    redis-cli EXISTS module/${module_id}/srv/http/openbao
+    Should Be Equal As Integers    ${output}    0
+    Unseal OpenBao    ${HOST}    ${unseal_key}
+    Wait Until Keyword Succeeds    30s    2s    OpenBao Should Be Active    ${HOST}
+
 Check if secrets survive a restart with manual unseal
     ${rc} =    Execute Command    runagent -m ${module_id} systemctl --user restart openbao.service
     ...    return_rc=True  return_stdout=False

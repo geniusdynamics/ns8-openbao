@@ -75,6 +75,32 @@
         />
       </cv-column>
     </cv-row>
+    <cv-row v-if="openbao.root_token_present">
+      <cv-column>
+        <NsInlineNotification
+          kind="warning"
+          :title="$t('status.root_token_title')"
+          :description="
+            $t('status.root_token_description', { command: rootTokensCommand })
+          "
+          :showCloseButton="false"
+        />
+      </cv-column>
+    </cv-row>
+    <cv-row v-if="openbao.initialized && openbao.module_token === 'missing'">
+      <cv-column>
+        <NsInlineNotification
+          kind="info"
+          :title="$t('status.module_token_title')"
+          :description="
+            $t('status.module_token_description', {
+              command: moduleTokenCommand,
+            })
+          "
+          :showCloseButton="false"
+        />
+      </cv-column>
+    </cv-row>
     <cv-row>
       <cv-column :md="4" :max="4">
         <NsInfoCard
@@ -433,6 +459,8 @@ export default {
         progress: 0,
         unseal_mode: "manual",
         user_domain: "",
+        module_token: "unknown",
+        root_token_present: null,
         ui_url: "",
       },
       isOpenbaoStatusLoaded: false,
@@ -456,6 +484,12 @@ export default {
   },
   computed: {
     ...mapState(["instanceName", "instanceLabel", "core", "appName"]),
+    rootTokensCommand() {
+      return `runagent -m ${this.instanceName} openbao-root-tokens --revoke`;
+    },
+    moduleTokenCommand() {
+      return `runagent -m ${this.instanceName} openbao-module-token create`;
+    },
     ldapLoginUrl() {
       // The OpenBao web UI preselects the auth method mounted at the path
       // given by the "with" query parameter

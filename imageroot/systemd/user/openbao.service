@@ -37,6 +37,7 @@ ExecStart=/usr/bin/podman run \
     --network=slirp4netns:allow_host_loopback=true \
     --publish=127.0.0.1:${TCP_PORT}:8200 \
     $OPENBAO_PUBLISH_METRICS \
+    $OPENBAO_PUBLISH_VPN_API \
     --volume=openbao-data:/openbao/file:Z \
     --volume=%E/state/openbao-config:/openbao/config:ro,Z \
     --volume=%E/state/openbao-plugins:/openbao/plugins:ro,Z \

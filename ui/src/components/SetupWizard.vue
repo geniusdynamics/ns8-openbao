@@ -133,6 +133,19 @@
               <li>{{ $t("wizard.auto_con") }}</li>
               <li>{{ $t("wizard.auto_when") }}</li>
             </ul>
+            <template
+              v-if="savedConfig && savedConfig.unseal_mode === 'transit'"
+            >
+              <cv-radio-button
+                :label="$t('settings.unseal_mode_transit')"
+                value="transit"
+                v-model="unsealMode"
+                :disabled="isInitialized"
+              />
+              <ul class="choice-details">
+                <li>{{ $t("wizard.transit_configured") }}</li>
+              </ul>
+            </template>
           </cv-radio-group>
           <NsInlineNotification
             v-if="error.unseal_mode"
@@ -488,7 +501,9 @@ export default {
       return !!(this.openbaoStatus && this.openbaoStatus.initialized);
     },
     canAutoInitialize() {
-      return this.unsealMode === "auto" && !this.isInitialized;
+      return (
+        ["auto", "transit"].includes(this.unsealMode) && !this.isInitialized
+      );
     },
     domainOptions() {
       // "none" is offered by the toggle in the wizard

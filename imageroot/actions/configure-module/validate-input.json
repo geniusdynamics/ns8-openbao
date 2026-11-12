@@ -30,10 +30,18 @@
             "starter_kits": [
                 "kv",
                 "pki"
-            ]
+            ],
+            "vpn_api": false
         },
         {
             "host": "vault.example.org"
+        },
+        {
+            "host": "vault.example.org",
+            "unseal_mode": "transit",
+            "transit_address": "https://kms.example.org:8200",
+            "transit_mount": "transit",
+            "transit_key": "ns8-openbao"
         }
     ],
     "type": "object",
@@ -79,10 +87,11 @@
         "unseal_mode": {
             "type": "string",
             "title": "Unseal mode",
-            "description": "'manual': Shamir unseal keys must be provided after every restart. 'auto': a static key stored on the node unseals OpenBao automatically. It can be changed only before OpenBao is initialized. Defaults to the current value, initially 'manual'",
+            "description": "'manual': Shamir unseal keys must be provided after every restart. 'auto': a static key stored on the node unseals OpenBao automatically. 'transit': an external OpenBao or Vault Transit engine unseals it (store its token first with openbao-transit-token). It can be changed only before OpenBao is initialized. Defaults to the current value, initially 'manual'",
             "enum": [
                 "manual",
-                "auto"
+                "auto",
+                "transit"
             ]
         },
         "user_domain": {
@@ -162,6 +171,31 @@
                     "approle"
                 ]
             }
+        },
+        "vpn_api": {
+            "type": "boolean",
+            "title": "Cluster network API",
+            "description": "Also publish the OpenBao API on the node cluster VPN address (third module TCP port), for NethServer modules and services of the cluster"
+        },
+        "transit_address": {
+            "type": "string",
+            "description": "Transit seal: URL of the external OpenBao or Vault, like https://vault.example.org:8200",
+            "pattern": "^$|^https?://",
+            "maxLength": 512
+        },
+        "transit_mount": {
+            "type": "string",
+            "description": "Transit seal: mount path of the transit engine. Default 'transit'",
+            "pattern": "^$|^[A-Za-z0-9_./-]{1,128}$"
+        },
+        "transit_key": {
+            "type": "string",
+            "description": "Transit seal: name of the transit key",
+            "pattern": "^$|^[A-Za-z0-9_.-]{1,128}$"
+        },
+        "transit_tls_skip_verify": {
+            "type": "boolean",
+            "description": "Transit seal: do not verify the TLS certificate of the external server"
         }
     }
 }

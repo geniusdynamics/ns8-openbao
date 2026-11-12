@@ -42,3 +42,9 @@ Route Should Be Forbidden
     ${output}  ${rc} =    Execute Command    curl -sS -o /dev/null -w '%{http_code}' -H 'Host: ${host}' http://127.0.0.1/v1/sys/seal-status
     ...    return_rc=True
     Should Be Equal    ${output}    403
+
+Execute Command And Expect Success
+    [Arguments]    ${command}
+    ${rc} =    Execute Command    ${command}
+    ...    return_rc=True  return_stdout=False
+    Should Be Equal As Integers    ${rc}  0

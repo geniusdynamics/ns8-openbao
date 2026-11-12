@@ -31,6 +31,10 @@ result = {
     "progress": int(status.get("progress", 0)) if status else 0,
     "unseal_mode": env["OPENBAO_UNSEAL_MODE"],
     "user_domain": env["OPENBAO_USER_DOMAIN"],
+    # Needs the module token (openbao-module-token); never returns tokens
+    "module_token": openbao.module_token_status() if status else "unknown",
+    "root_token_present": openbao.root_token_present()
+    if status and status.get("initialized") and not status.get("sealed") else None,
     "ui_url": f"https://{host}/ui/" if host else "",
 }
 

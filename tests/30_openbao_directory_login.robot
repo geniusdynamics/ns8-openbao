@@ -52,6 +52,15 @@ Check if the break-glass token gives administrator access
     &{auth} =    Bao Request    ${HOST}    GET    sys/auth    ${EMPTY}    ${breakglass}
     Dictionary Should Contain Key    ${auth.data}    ldap/
 
+Check if self-initialization created the module token
+    ${output}  ${rc} =    Execute Command    runagent -m ${module_id} openbao-module-token status
+    ...    return_rc=True
+    Should Be Equal    ${output}    valid
+    ${output}  ${rc} =    Execute Command    api-cli run module/${module_id}/get-openbao-status
+    ...    return_rc=True
+    &{status} =    Evaluate    json.loads('''${output}''')    modules=json
+    Should Be Equal    ${status.root_token_present}    ${False}
+
 Check if the module is bound to the user domain
     ${output}  ${rc} =    Execute Command    redis-cli HGET cluster/module_domains ${module_id}
     ...    return_rc=True

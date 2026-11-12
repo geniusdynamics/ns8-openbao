@@ -35,11 +35,14 @@ SEAL_KEY_FILE = "openbao-seal.key"
 PLUGIN_DIR = "openbao-plugins"  # mounted read-only on /openbao/plugins
 PLUGIN_STATE_FILE = "openbao-plugins.json"
 BREAKGLASS_TOKEN_FILE = "openbao-breakglass.token"
+MODULE_TOKEN_FILE = "openbao-module.token"
+TRANSIT_TOKEN_FILE = "openbao-transit.token"
+SNAPSHOT_FILE = "openbao.snap"
 
 DATA_VOLUME = "openbao-data"
 
 LOG_LEVELS = ["trace", "debug", "info", "warn", "error"]
-UNSEAL_MODES = ["manual", "auto"]
+UNSEAL_MODES = ["manual", "auto", "transit"]
 DEFAULTS = {
     "OPENBAO_LOG_LEVEL": "info",
     "OPENBAO_AUDIT_LOG": "False",
@@ -52,6 +55,11 @@ DEFAULTS = {
     "OPENBAO_IP_ALLOWLIST": "",
     "OPENBAO_LDAP_GROUP_POLICIES": "",
     "OPENBAO_STARTER_KITS": "kv",
+    "OPENBAO_VPN_API": "False",
+    "OPENBAO_TRANSIT_ADDRESS": "",
+    "OPENBAO_TRANSIT_MOUNT": "transit",
+    "OPENBAO_TRANSIT_KEY": "",
+    "OPENBAO_TRANSIT_TLS_SKIP_VERIFY": "False",
 }
 
 STARTER_KITS = ["kv", "pki", "approle"]
@@ -93,6 +101,27 @@ path "pki/cert/ca" {
 }
 """,
 }
+
+# Narrow policy of the module token: consistent backups (Raft snapshots),
+# root token detection and Raft status. It cannot read secrets, change the
+# configuration or revoke tokens.
+MODULE_POLICY_NAME = "ns8-module"
+MODULE_POLICY = """# Token held by the NethServer 8 module, on the node only
+path "sys/storage/raft/snapshot" {
+  capabilities = ["read"]
+}
+path "sys/storage/raft/configuration" {
+  capabilities = ["read"]
+}
+path "auth/token/accessors" {
+  capabilities = ["list", "sudo"]
+}
+path "auth/token/lookup-accessor" {
+  capabilities = ["update"]
+}
+"""
+MODULE_TOKEN_VAR = "NS8_MODULE_TOKEN"
+MODULE_TOKEN_PERIOD = "768h"
 
 LDAP_BIND_PASSWORD_VAR = "NS8_LDAP_BIND_PASSWORD"
 BREAKGLASS_TOKEN_VAR = "NS8_BREAKGLASS_TOKEN"
@@ -334,6 +363,113 @@ def ensure_breakglass_token():
         return tfile.read().strip()
 
 
+def ensure_module_token_id():
+    """Return the ID of the module token created by self-initialization."""
+    if not os.path.exists(MODULE_TOKEN_FILE):
+        write_secret_file(MODULE_TOKEN_FILE, "ns8mod" + secrets.token_hex(24))
+    return read_module_token()
+
+
+def write_secret_file(path, value):
+    """Atomically write an owner-only file with a single value."""
+    _write_file(path, value.strip() + "\n", 0o600)
+
+
+def read_module_token():
+    try:
+        with open(MODULE_TOKEN_FILE, encoding="utf-8") as tfile:
+            return tfile.read().strip()
+    except FileNotFoundError:
+        return ""
+
+
+def module_token_status():
+    """Return "missing", "valid", "invalid" or "unknown" (server unreachable)."""
+    token = read_module_token()
+    if not token:
+        return "missing"
+    try:
+        api_request("auth/token/lookup-self", token=token, timeout=5)
+        return "valid"
+    except urllib.error.HTTPError as ex:
+        return "invalid" if ex.code in (400, 403) else "unknown"
+    except (urllib.error.URLError, OSError, ValueError):
+        return "unknown"
+
+
+def root_token_present(limit=500):
+    """Return True if a root token exists, False if not, None if unknown.
+
+    Uses the module token: lists the token accessors (not the tokens) and
+    looks them up until a root token is found.
+    """
+    token = read_module_token()
+    if not token:
+        return None
+    try:
+        listing = api_request("auth/token/accessors", method="LIST", token=token, timeout=10)
+        accessors = listing.get("data", {}).get("keys", [])
+        if len(accessors) > limit:
+            return None
+        for accessor in accessors:
+            info = api_request("auth/token/lookup-accessor", method="POST",
+                               data={"accessor": accessor}, token=token, timeout=5)
+            if "root" in info.get("data", {}).get("policies", []):
+                return True
+        return False
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
+def save_snapshot(path=SNAPSHOT_FILE):
+    """Save a Raft snapshot with the module token. Return True on success."""
+    token = read_module_token()
+    if not token:
+        return False
+    url = f"http://127.0.0.1:{os.environ['TCP_PORT']}/v1/sys/storage/raft/snapshot"
+    req = urllib.request.Request(url, headers={"X-Vault-Token": token})
+    tmp_path = path + ".tmp"
+    try:
+        with _opener().open(req, timeout=300) as resp, \
+                open(os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as sfile:
+            while True:
+                chunk = resp.read(1 << 20)
+                if not chunk:
+                    break
+                sfile.write(chunk)
+        os.replace(tmp_path, path)
+        return True
+    except (urllib.error.URLError, OSError) as ex:
+        log(f"Raft snapshot failed: {ex}", "<4>")
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        return False
+
+
+def vpn_api_enabled(env):
+    return is_true(env.get("OPENBAO_VPN_API", "False"))
+
+
+def vpn_api_port(env):
+    """Return the TCP port of the cluster network API listener, or None."""
+    ports = os.environ.get("TCP_PORTS", "").split(",")
+    if len(ports) >= 3 and ports[2].strip().isdigit():
+        return int(ports[2])
+    value = env.get("OPENBAO_VPN_API_PORT", "")
+    return int(value) if value.isdigit() else None
+
+
+def vpn_api_endpoint(env):
+    """Return (address, port) of the cluster network API, or None."""
+    if not vpn_api_enabled(env):
+        return None
+    port = vpn_api_port(env)
+    address = node_vpn_address() if port else None
+    if not port or not address:
+        return None
+    return address, port
+
+
 def discover_ldap(domain):
     """Return the LDAP connection parameters of an NS8 user domain, or None.
 
@@ -492,7 +628,31 @@ def render_initialize(params, env):
             "renewable": False,
         },
     }, False)
-    # 3. the other built-in policies, directory login, group mappings and
+    # 3. module token for snapshots and root token detection (allowed to fail)
+    add({
+        "name": "ns8-module-policy",
+        "operation": "update",
+        "path": f"sys/policies/acl/{MODULE_POLICY_NAME}",
+        "data": {"policy": MODULE_POLICY},
+    }, True)
+    add({
+        "name": "ns8-module-token",
+        "operation": "update",
+        "path": "auth/token/create-orphan",
+        "data": {
+            "id": {
+                "eval_source": "env",
+                "eval_type": "string",
+                "env_var": MODULE_TOKEN_VAR,
+                "require_present": True,
+            },
+            "policies": [MODULE_POLICY_NAME],
+            "display_name": "ns8-module",
+            "period": MODULE_TOKEN_PERIOD,
+            "renewable": True,
+        },
+    }, True)
+    # 4. the other built-in policies, directory login, group mappings and
     #    starter kits (allowed to fail)
     for req in policy_requests():
         if req["path"] != login[0]["path"]:
@@ -536,7 +696,7 @@ def metrics_endpoint():
 
 def auto_initialize_wanted(env):
     return (
-        env["OPENBAO_UNSEAL_MODE"] == "auto"
+        env["OPENBAO_UNSEAL_MODE"] in ("auto", "transit")
         and is_true(env["OPENBAO_AUTO_INITIALIZE"])
         and bool(env["OPENBAO_USER_DOMAIN"])
         and bool(env["OPENBAO_LDAP_ADMIN_GROUP"])
@@ -611,7 +771,21 @@ def render_config(env):
             static_part.append("}")
 
     container_env = []
-    if unseal_mode == "auto":
+    if unseal_mode == "transit":
+        static_part.append("")
+        static_part.append('seal "transit" {')
+        static_part.append(f"  address         = {_hcl_string(env['OPENBAO_TRANSIT_ADDRESS'])}")
+        static_part.append(f"  mount_path      = {_hcl_string(env['OPENBAO_TRANSIT_MOUNT'] or 'transit')}")
+        static_part.append(f"  key_name        = {_hcl_string(env['OPENBAO_TRANSIT_KEY'])}")
+        static_part.append(f"  tls_skip_verify = {_hcl_string(str(is_true(env['OPENBAO_TRANSIT_TLS_SKIP_VERIFY'])).lower())}")
+        static_part.append("}")
+        try:
+            with open(TRANSIT_TOKEN_FILE, encoding="utf-8") as tfile:
+                # The seal renews this token by itself
+                container_env.append(f"BAO_TOKEN={tfile.read().strip()}")
+        except FileNotFoundError:
+            log("Transit seal: no token, run openbao-transit-token", "<3>")
+    elif unseal_mode == "auto":
         key_id, key_hex = ensure_seal_key()
         static_part.append("")
         static_part.append('seal "static" {')
@@ -649,6 +823,7 @@ def render_config(env):
             init_text = render_initialize(params, env)
             init_env.append(f"{LDAP_BIND_PASSWORD_VAR}={params['bind_password']}")
             init_env.append(f"{BREAKGLASS_TOKEN_VAR}={ensure_breakglass_token()}")
+            init_env.append(f"{MODULE_TOKEN_VAR}={ensure_module_token_id()}")
 
     config_text = (
         "# Generated by ns8-openbao: manual changes are overwritten.\n"
@@ -663,6 +838,9 @@ def render_config(env):
     endpoint = metrics_endpoint()
     publish = f"--publish={endpoint[0]}:{endpoint[1]}:{METRICS_CONTAINER_PORT}" if endpoint else ""
     runtime_env_text = f"OPENBAO_PUBLISH_METRICS={publish}\n"
+    vpn_api = vpn_api_endpoint(env)
+    vpn_publish = f"--publish={vpn_api[0]}:{vpn_api[1]}:8200" if vpn_api else ""
+    runtime_env_text += f"OPENBAO_PUBLISH_VPN_API={vpn_publish}\n"
     return {
         "runtime_env_text": runtime_env_text,
         "config_text": config_text,

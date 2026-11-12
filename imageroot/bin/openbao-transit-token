@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# Store the token used by the Transit seal to reach the external OpenBao or
+# Vault that holds the unseal key. Run it on the node, before selecting the
+# Transit unseal mode:
+#
+#   runagent -m openbao1 openbao-transit-token
+#
+# The token is read from the terminal (or from TRANSIT_TOKEN), stored in an
+# owner-only file and included in backups. It needs "update" on
+# <mount>/encrypt/<key> and <mount>/decrypt/<key> of the external server;
+# OpenBao renews it automatically. It never passes through Redis.
+#
+
+import getpass
+import os
+import sys
+import openbao
+
+token = os.environ.get("TRANSIT_TOKEN") or getpass.getpass("Transit token: ")
+if not token.strip():
+    sys.exit("A token is required")
+openbao.write_secret_file(openbao.TRANSIT_TOKEN_FILE, token)
+print("Transit token stored. Restart OpenBao to use a changed token:")
+print("  systemctl --user restart openbao.service")
