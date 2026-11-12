@@ -675,6 +675,34 @@ api-cli run update-module --data '{
 
 An update restarts OpenBao: with manual unseal it must be unsealed again.
 
+### Updating from 1.0.0
+
+Release 1.0.0 shipped with OpenBao 2.7, which no longer bundles the LDAP
+auth method. The update adds the pinned LDAP plugin image, a third TCP
+port (allocated when the cluster network API is enabled) and the new
+settings, which all start disabled or with their previous behaviour.
+
+- **Manual unseal** (A): the instance is updated in place. Unseal it again
+  after the update. Nothing else changes.
+- **Automatic unseal without automatic initialization** (B): updated in
+  place, it unseals itself.
+- **Automatic unseal with automatic initialization** (C): in 1.0.0 the
+  self-initialization failed at its first step, enabling LDAP login, and
+  OpenBao logs `self-initialization failed: refusing to unseal` at every
+  start. The update cannot repair that storage. Such an instance never
+  became usable (the root token was never shown and nobody could log
+  in), so it holds no secrets: after the update, reset it and let it
+  initialize itself again:
+
+  ```bash
+  runagent -m openbao1 openbao-reset-failed-init
+  ```
+
+  The command refuses to run unless OpenBao uses automatic unseal, is
+  initialized but sealed, and its log shows the self-initialization
+  failure. Removing the application and installing it again has the same
+  effect.
+
 ## Uninstall
 
 ```bash
