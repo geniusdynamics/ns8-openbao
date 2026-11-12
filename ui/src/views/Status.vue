@@ -127,14 +127,25 @@
           class="min-height-card"
         >
           <template slot="content">
-            <NsButton
-              kind="ghost"
-              :icon="Settings20"
-              :disabled="loading.getOpenbaoStatus"
-              @click="goToAppPage(instanceName, 'settings')"
-            >
-              {{ $t("status.configure") }}
-            </NsButton>
+            <div class="card-actions">
+              <NsButton
+                v-if="ldapLoginUrl"
+                kind="ghost"
+                :icon="Launch20"
+                :disabled="loading.getOpenbaoStatus"
+                @click="openLdapLogin"
+              >
+                {{ $t("status.ldap_login") }}
+              </NsButton>
+              <NsButton
+                kind="ghost"
+                :icon="Settings20"
+                :disabled="loading.getOpenbaoStatus"
+                @click="goToAppPage(instanceName, 'settings')"
+              >
+                {{ $t("status.configure") }}
+              </NsButton>
+            </div>
           </template>
         </NsInfoCard>
       </cv-column>
@@ -427,6 +438,15 @@ export default {
   },
   computed: {
     ...mapState(["instanceName", "instanceLabel", "core", "appName"]),
+    ldapLoginUrl() {
+      // The OpenBao web UI preselects the auth method mounted at the path
+      // given by the "with" query parameter
+      const ob = this.openbao;
+      if (!ob.ui_url || !ob.user_domain || !ob.initialized) {
+        return "";
+      }
+      return ob.ui_url + "vault/auth?with=ldap%2F";
+    },
     openbaoStateLabel() {
       if (!this.isOpenbaoStatusLoaded) {
         return "-";
@@ -543,6 +563,9 @@ export default {
   methods: {
     openOpenbaoUi() {
       window.open(this.openbao.ui_url, "_blank", "noopener");
+    },
+    openLdapLogin() {
+      window.open(this.ldapLoginUrl, "_blank", "noopener");
     },
     async getOpenbaoStatus() {
       this.loading.getOpenbaoStatus = true;

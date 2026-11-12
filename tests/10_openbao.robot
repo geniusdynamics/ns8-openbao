@@ -103,6 +103,25 @@ Check if a secret can be stored
     Bao Request    ${HOST}    POST    sys/mounts/secret    {"type": "kv", "options": {"version": "2"}}    ${root_token}
     Bao Request    ${HOST}    POST    secret/data/robot    {"data": {"answer": "42"}}    ${root_token}
 
+Check if the Prometheus target is published
+    ${output}  ${rc} =    Execute Command    redis-cli HGET module/${module_id}/metrics_targets openbao
+    ...    return_rc=True
+    Should Be Equal As Integers    ${rc}  0
+    Should Contain    ${output}    /v1/sys/metrics
+    ${target} =    Evaluate    json.loads('''${output}''')[0]['targets'][0]    modules=json
+    Set Suite Variable    ${metrics_target}    ${target}
+
+Check if Prometheus metrics can be scraped from the cluster VPN address
+    ${output}  ${rc} =    Execute Command    curl -sS -f 'http://${metrics_target}/v1/sys/metrics?format=prometheus'
+    ...    return_rc=True
+    Should Be Equal As Integers    ${rc}  0
+    Should Contain    ${output}    vault_core_unsealed
+
+Check if metrics are not served by the public listener
+    ${rc} =    Execute Command    curl -sS -f -o /dev/null -H 'Host: ${HOST}' 'http://127.0.0.1/v1/sys/metrics?format=prometheus'
+    ...    return_rc=True  return_stdout=False
+    Should Not Be Equal As Integers    ${rc}  0
+
 Check if the unseal mode is locked after initialization
     ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host": "${HOST}", "unseal_mode": "auto"}'
     ...    return_rc=True  return_stdout=False

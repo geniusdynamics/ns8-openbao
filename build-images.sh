@@ -41,13 +41,14 @@ buildah add "${container}" imageroot /imageroot
 buildah add "${container}" ui/dist /ui
 # - routeadm on the node Traefik: publish the OpenBao API and web UI
 # - accountconsumer: bind a user domain for OpenBao directory login
-# - one TCP port, bound to 127.0.0.1, for the OpenBao listener
+# - two TCP ports: the OpenBao API listener, bound to 127.0.0.1, and the
+#   Prometheus metrics listener, bound to the node cluster VPN address
 # - rootless module
 # - pinned OpenBao image: Renovate tracks the org.nethserver.images label
 # - core 3.13+ provides agent.set_route() and agent.get_route()
 buildah config --entrypoint=/ \
     --label="org.nethserver.authorizations=traefik@node:routeadm cluster:accountconsumer" \
-    --label="org.nethserver.tcp-ports-demand=1" \
+    --label="org.nethserver.tcp-ports-demand=2" \
     --label="org.nethserver.rootfull=0" \
     --label="org.nethserver.min-core=3.13.0" \
     --label="org.nethserver.images=docker.io/openbao/openbao:2.7.2" \

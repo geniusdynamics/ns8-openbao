@@ -7,7 +7,9 @@
 # OpenBao server with Raft integrated storage. The API and web UI are
 # published on the host loopback interface only: Traefik exposes them on
 # the configured host name with TLS. The container reaches the node
-# ldapproxy for directory login at 10.0.2.2 (host loopback).
+# ldapproxy for directory login at 10.0.2.2 (host loopback). The
+# Prometheus metrics listener is published on the node cluster VPN
+# address, for the NS8 metrics module.
 #
 [Unit]
 Description=OpenBao secrets manager
@@ -15,6 +17,9 @@ Description=OpenBao secrets manager
 [Service]
 Environment=PODMAN_SYSTEMD_UNIT=%n
 EnvironmentFile=%E/state/environment
+# Written by openbao-write-config (ExecStartPre): systemd reads it again
+# before ExecStart
+EnvironmentFile=-%E/state/openbao-runtime.env
 WorkingDirectory=%E/state
 Restart=always
 TimeoutStartSec=120
@@ -30,6 +35,7 @@ ExecStart=/usr/bin/podman run \
     --security-opt=no-new-privileges \
     --network=slirp4netns:allow_host_loopback=true \
     --publish=127.0.0.1:${TCP_PORT}:8200 \
+    $OPENBAO_PUBLISH_METRICS \
     --volume=openbao-data:/openbao/file:Z \
     --volume=%E/state/openbao-config:/openbao/config:ro,Z \
     --env-file=%E/state/openbao-container.env \

@@ -47,7 +47,8 @@
     "not_running_title": "OpenBao is not running",
     "not_running_description": "Check the system logs of the application for errors.",
     "directory_login": "Directory login",
-    "directory_login_disabled": "Disabled"
+    "directory_login_disabled": "Disabled",
+    "ldap_login": "Log in with directory account"
   },
   "settings": {
     "title": "Settings",

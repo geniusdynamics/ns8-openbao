@@ -30,6 +30,7 @@ CONFIG_FILE = CONFIG_DIR + "/openbao.hcl"
 APPLIED_FILE = "openbao-applied.json"  # configuration loaded by the server
 INIT_FILE = CONFIG_DIR + "/ns8-initialize.json"  # self-initialization requests
 CONTAINER_ENV_FILE = "openbao-container.env"
+RUNTIME_ENV_FILE = "openbao-runtime.env"  # podman arguments for openbao.service
 SEAL_KEY_FILE = "openbao-seal.key"
 
 DATA_VOLUME = "openbao-data"
@@ -59,6 +60,13 @@ LDAP_BIND_PASSWORD_VAR = "NS8_LDAP_BIND_PASSWORD"
 # Podman translates this address to the node loopback interface, where
 # the NS8 ldapproxy listens (slirp4netns allow_host_loopback=true)
 HOST_LOOPBACK_ADDR = "10.0.2.2"
+
+# Prometheus metrics: a dedicated listener that serves only /v1/sys/metrics,
+# published on the node cluster VPN address, where the NS8 metrics module
+# (possibly running on another node) scrapes it. The API listener published
+# through Traefik never serves metrics.
+METRICS_CONTAINER_PORT = 8202
+METRICS_PATH = "/v1/sys/metrics"
 
 # The Raft node ID and cluster address must never change: they are stored
 # inside the Raft data. Do not derive them from MODULE_ID, otherwise a
@@ -292,6 +300,34 @@ def render_initialize(params, admin_group):
     return json.dumps({"initialize": [{"ns8-directory-login": {"request": requests}}]}, indent=2) + "\n"
 
 
+def metrics_port():
+    """Return the second TCP port allocated to the module, or None."""
+    ports = os.environ.get("TCP_PORTS", "").split(",")
+    if len(ports) >= 2 and ports[1].strip().isdigit():
+        return int(ports[1])
+    return None
+
+
+def node_vpn_address():
+    """Return the cluster VPN IP address of this node, or None."""
+    try:
+        import agent
+        rdb = agent.redis_connect(use_replica=True)
+        return rdb.hget(f"node/{os.environ['NODE_ID']}/vpn", "ip_address") or None
+    except Exception as ex:
+        log(f"Cannot read the node VPN address: {ex}", "<4>")
+        return None
+
+
+def metrics_endpoint():
+    """Return (address, port) where Prometheus scrapes OpenBao, or None."""
+    port = metrics_port()
+    address = node_vpn_address() if port else None
+    if not port or not address:
+        return None
+    return address, port
+
+
 def auto_initialize_wanted(env):
     return (
         env["OPENBAO_UNSEAL_MODE"] == "auto"
@@ -336,6 +372,24 @@ def render_config(env):
     static_part.append(f"  x_forwarded_for_authorized_addrs      = {_hcl_string(','.join(XFF_AUTHORIZED_ADDRS))}")
     static_part.append('  x_forwarded_for_reject_not_authorized = "false"')
     static_part.append('  x_forwarded_for_reject_not_present    = "false"')
+    static_part.append("  telemetry {")
+    static_part.append("    disallow_metrics = true")
+    static_part.append("  }")
+    static_part.append("}")
+    static_part.append("")
+    static_part.append('listener "tcp" {')
+    static_part.append(f'  address         = "0.0.0.0:{METRICS_CONTAINER_PORT}"')
+    static_part.append(f'  cluster_address = "127.0.0.1:{METRICS_CONTAINER_PORT + 1}"')
+    static_part.append("  tls_disable     = true")
+    static_part.append("  telemetry {")
+    static_part.append("    metrics_only                   = true")
+    static_part.append("    unauthenticated_metrics_access = true")
+    static_part.append("  }")
+    static_part.append("}")
+    static_part.append("")
+    static_part.append("telemetry {")
+    static_part.append('  prometheus_retention_time = "24h"')
+    static_part.append("  disable_hostname          = true")
     static_part.append("}")
 
     container_env = []
@@ -382,12 +436,19 @@ def render_config(env):
         + "\n".join(reloadable) + "\n"
     )
     container_env_text = "".join(line + "\n" for line in container_env + init_env)
+
+    # Systemd expands $OPENBAO_PUBLISH_METRICS to zero or more podman
+    # arguments: without an endpoint the metrics port is not published.
+    endpoint = metrics_endpoint()
+    publish = f"--publish={endpoint[0]}:{endpoint[1]}:{METRICS_CONTAINER_PORT}" if endpoint else ""
+    runtime_env_text = f"OPENBAO_PUBLISH_METRICS={publish}\n"
     return {
+        "runtime_env_text": runtime_env_text,
         "config_text": config_text,
         "container_env_text": container_env_text,
         "init_text": init_text,
         "restart_signature": hashlib.sha256(
-            (static_text + "".join(line + "\n" for line in container_env)).encode()).hexdigest(),
+            (static_text + "".join(line + "\n" for line in container_env) + runtime_env_text).encode()).hexdigest(),
         "config_hash": hashlib.sha256(config_text.encode()).hexdigest(),
         "init_hash": hashlib.sha256(
             (init_text + "".join(init_env)).encode()).hexdigest(),
@@ -408,6 +469,7 @@ def write_config():
     # The container env file holds the seal key and, until OpenBao is
     # initialized, the LDAP bind password: owner-only permissions.
     _write_file(CONTAINER_ENV_FILE, rendered["container_env_text"], 0o600)
+    _write_file(RUNTIME_ENV_FILE, rendered["runtime_env_text"], 0o644)
     # The OpenBao process runs as an unprivileged user inside the container
     # and must be able to read the configuration files. They hold no
     # secrets. The whole directory is mounted, so an atomic replace is

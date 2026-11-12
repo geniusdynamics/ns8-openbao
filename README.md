@@ -23,10 +23,11 @@ The module runs OpenBao as a rootless container with:
 
 - [Install](#install)
 - [Configure](#configure)
-- [Initialize and unseal](#initialize-and-unseal)
+- [First-time setup](#first-time-setup)
 - [Unseal modes](#unseal-modes)
 - [Directory login (LDAP / Active Directory)](#directory-login-ldap--active-directory)
 - [Notifications and alerts](#notifications-and-alerts)
+- [Prometheus metrics](#prometheus-metrics)
 - [Get the configuration and state](#get-the-configuration-and-state)
 - [Backup and restore](#backup-and-restore)
 - [Update](#update)
@@ -101,26 +102,140 @@ Changing `log_level` or `audit_log` reloads OpenBao in place. Changing
 `host` or `unseal_mode` restarts it: with manual unseal it must be
 unsealed again.
 
-## Initialize and unseal
+## First-time setup
 
-A new instance starts **uninitialized**. Open the web UI at
-`https://<host>/ui/` (the *Open OpenBao* button on the *Status* page) and
-initialize it, or use the CLI:
+A new instance starts **uninitialized**: OpenBao has no data, no keys and
+no users yet. *Initializing* it creates the encryption keys and the first
+credentials. Which credentials you get, and where they appear, depends on
+two settings chosen in *Settings* **before** initializing: the unseal mode
+and directory login.
+
+### Words used below
+
+- **Root token**: a token with unlimited power, like the root password of
+  OpenBao. Use it for the first configuration only, then revoke it.
+- **Unseal keys** (manual unseal only): the master key split into shares,
+  for example 5 shares of which any 3 unlock OpenBao. They are needed
+  after **every** restart, update or reboot.
+- **Recovery keys** (automatic unseal only): shares that never unseal
+  OpenBao, but authorize sensitive operations such as generating a new root
+  token when no administrator can log in.
+
+OpenBao shows the root token and keys **only once** and cannot recover
+them. The module never sees or stores them: NethServer keeps action
+inputs and outputs in Redis, readable by other modules, so they are
+handled only by the OpenBao web UI or CLI, over HTTPS.
+
+### Choose your setup
+
+| Setup | Unseal mode | Directory login | First credentials |
+|---|---|---|---|
+| [A](#a-manual-unseal-without-directory-login) | manual | no | unseal keys + root token |
+| [B](#b-automatic-unseal-without-directory-login) | automatic | no | recovery keys + root token |
+| [C](#c-automatic-unseal-with-automatic-directory-login) | automatic | yes, `auto_initialize` | none: domain admins log in |
+| [D](#d-adding-directory-login-later) | any | yes, after initialization | root token of A or B |
+
+Start in every case from the application *Settings* page: set the host
+name, choose the unseal mode and, for C, the user domain and the
+administrators group. Save, then go to the *Status* page.
+
+### A. Manual unseal, without directory login
+
+1. On the *Status* page click **Open OpenBao**. The web UI shows the
+   initialization page.
+2. Choose the number of key shares and the threshold (for example 5 and
+   3) and initialize.
+3. **Download the keys** (JSON file) or copy the root token and every
+   unseal key. Hand the key shares to different trusted people; do not
+   keep them together with the root token.
+4. Continue to unseal: enter key shares until the threshold is reached.
+5. Sign in with the **Token** method, using the root token.
+6. Create real administrator access, for example a `userpass` user with
+   an admin policy, or set up [directory login](#d-adding-directory-login-later).
+7. Revoke the root token: `bao token revoke -self`.
+
+The same with the CLI, from any computer with the `bao` client:
 
 ```bash
 export BAO_ADDR=https://vault.example.org
-bao operator init                    # manual unseal: 5 key shares, threshold 3
-bao operator init -recovery-shares=5 -recovery-threshold=3   # automatic unseal
+bao operator init -key-shares=5 -key-threshold=3   # prints 5 unseal keys and the root token
+bao operator unseal                                # repeat 3 times, one key each time
+bao login                                          # paste the root token
 ```
 
-The root token and the unseal (or recovery) keys are shown **only once**.
-Store them in a safe place, separately. Then revoke the root token once
-you have configured an auth method and an administrative policy.
+**After every restart** (update, reboot, settings change of host name)
+OpenBao is sealed again. The *Status* page shows *Sealed* with the
+progress, and notifications are sent if configured. Open the web UI and
+enter the threshold number of unseal keys, or run `bao operator unseal`.
 
-On purpose, the module never handles root tokens, unseal keys or recovery
-keys: NethServer 8 keeps action inputs and outputs in Redis, readable by
-other modules, so secrets must not travel through module actions. The
-*Status* page only reads the unauthenticated seal status.
+### B. Automatic unseal, without directory login
+
+1. On the *Status* page click **Open OpenBao** and initialize. There is no
+   unseal step: OpenBao unseals itself with the key stored on the node.
+2. Save the **root token** and the **recovery keys**.
+3. Sign in with the root token, create administrator access (as in step 6
+   of A) and revoke the root token.
+
+CLI: `bao operator init -recovery-shares=5 -recovery-threshold=3`, then
+`bao login`.
+
+### C. Automatic unseal with automatic directory login
+
+In *Settings* choose **Automatic unseal**, a **user domain**, an
+**administrators group** and check **Initialize OpenBao automatically
+with directory login**. On save:
+
+1. OpenBao initializes itself at once. It enables LDAP login on the user
+   domain, grants the `ns8-admin` policy (full access) to the
+   administrators group and creates a `secret/` key/value store.
+2. No root token and no recovery keys exist. The *Status* page shows
+   *Unsealed*.
+3. Click **Log in with directory account** on the *Status* page: the web
+   UI opens with the LDAP method selected. Log in with the user name and
+   password of a member of the administrators group.
+4. Generate recovery keys and store them safely: without them a new root
+   token can never be generated if directory login breaks.
+
+   ```bash
+   export BAO_ADDR=https://vault.example.org
+   bao login -method=ldap username=alice
+   bao operator rotate-keys -init -key-shares=5 -key-threshold=3 -target=recovery
+   ```
+
+### D. Adding directory login later
+
+For an instance initialized with A or B, or when the user domain or group
+changes later:
+
+1. In *Settings* choose the user domain and the administrators group, and
+   save.
+2. On the node, run the command shown in *Settings* and paste a token
+   with administrator rights (the root token works):
+
+   ```bash
+   runagent -m openbao1 openbao-setup-ldap
+   ```
+
+3. Members of the administrators group can now use **Log in with
+   directory account**. You can revoke the root token.
+
+### Lost credentials
+
+- **Root token lost**: generate a new one with the unseal keys (A) or the
+  recovery keys (B, or C after step 4):
+
+  ```bash
+  bao operator generate-root -init            # prints a nonce and an OTP
+  bao operator generate-root                  # repeat with each key share
+  bao operator generate-root -decode=<encoded token> -otp=<OTP>
+  ```
+
+- **Unseal keys lost** (manual unseal): if fewer than the threshold remain,
+  the data cannot be decrypted by anybody. Keep copies in separate safe
+  places.
+- **Directory login broken and no recovery keys** (C without step 4): no
+  new administrator access can be created. Restore a backup or
+  reinitialize.
 
 ## Unseal modes
 
@@ -165,35 +280,23 @@ Users log in with their domain account:
 bao login -method=ldap username=alice
 ```
 
-or from the web UI, choosing the *LDAP* method. Create further policies
-and map other groups with `auth/ldap/groups/<group>`.
+or with the **Log in with directory account** button of the *Status*
+page, which opens the web UI with the LDAP method selected
+(`https://<host>/ui/vault/auth?with=ldap%2F`). Create further policies and
+map other groups with `auth/ldap/groups/<group>`.
 
-How OpenBao is configured depends on its state:
+How OpenBao gets this configuration depends on its state, see
+[First-time setup](#first-time-setup):
 
-- **Automatic initialization** (`auto_initialize`, requires automatic
-  unseal and an uninitialized server): OpenBao initializes itself at the
-  next start with directory login, the `ns8-admin` policy and a `secret/`
-  key/value (v2) store. No root token and no recovery keys are created:
-  members of the administrators group log in at once. After the first
-  login, generate recovery keys and store them safely:
-
-  ```bash
-  bao operator rotate-keys -init -key-shares=5 -key-threshold=3 -target=recovery
-  ```
-
-  The module checks that the group exists before saving, because a wrong
-  group would leave OpenBao without administrators.
-
-- **Already initialized, or manual unseal**: the module cannot change
-  OpenBao without an administrator token, and tokens must never pass
-  through module actions. After saving the settings, run on the node:
-
-  ```bash
-  runagent -m openbao1 openbao-setup-ldap
-  ```
-
-  It prompts for an OpenBao token (or reads `BAO_TOKEN`), applies the same
-  configuration and forgets the token.
+- **Automatic initialization** ([setup C](#c-automatic-unseal-with-automatic-directory-login)):
+  requires automatic unseal and an uninitialized server. The module checks
+  that the group exists before saving, because a wrong group would leave a
+  self-initialized OpenBao without administrators.
+- **`openbao-setup-ldap`** ([setup D](#d-adding-directory-login-later)):
+  for an initialized server, or with manual unseal. The module cannot
+  change OpenBao without an administrator token, and tokens must never
+  pass through module actions: the command prompts for a token on the node
+  (or reads `BAO_TOKEN`), applies the configuration and forgets the token.
 
 OpenBao keeps its own copy of the LDAP connection settings. If the domain
 bind credentials or servers change, the module logs a warning, sends a
@@ -218,6 +321,38 @@ paths, both through the cluster SMTP smarthost (configured in the cluster
   minutes) and `OpenbaoNotInitialized` (warning, after 24 hours). They
   appear in the cluster alert list and are mailed to the cluster alert
   recipients.
+
+## Prometheus metrics
+
+OpenBao [telemetry](https://openbao.org/docs/configuration/telemetry/) is
+published for the NethServer **Metrics** module (Prometheus and Grafana),
+which can run on any node of the cluster:
+
+- a second OpenBao listener serves only `/v1/sys/metrics`, without
+  authentication. It is published on the second TCP port of the module,
+  bound to the node cluster VPN address (for example `10.5.4.1`): it is
+  reachable by the cluster nodes only, never through Traefik. The public
+  listener refuses metrics requests
+- `configure-module` publishes the scrape target in
+  `module/<module_id>/metrics_targets`, with the `/v1/sys/metrics` path and
+  the `format=prometheus` parameter, and emits `metrics-target-changed`.
+  If the node VPN address changes, the target and the listener follow it
+- metric names keep the OpenBao default `vault_` prefix, for example
+  `vault_core_unsealed`, `vault_core_handle_request_count` or
+  `vault_token_count`, so dashboards made for Vault work as they are. They
+  carry the `module_id="openbao1"` label added by the Metrics module
+
+Query them from Grafana (enable it in the Metrics module settings), or test
+the endpoint from a cluster node:
+
+```bash
+curl "http://10.5.4.1:<second port>/v1/sys/metrics?format=prometheus"
+```
+
+The second port is in the module `TCP_PORTS` environment variable
+(`runagent -m openbao1 printenv TCP_PORTS`). Metrics are served only while
+OpenBao is initialized and unsealed; the module own `openbao_up`,
+`openbao_sealed` and `openbao_initialized` metrics cover the other states.
 
 ## Get the configuration and state
 
@@ -272,11 +407,6 @@ api-cli run update-module --data '{
 
 An update restarts OpenBao: with manual unseal it must be unsealed again.
 
-Releases before 1.0.0 ran OpenBao in **development mode**, which keeps
-everything in memory: no data was ever persisted. The update removes the
-old pod and starts a new, uninitialized server. Configure the unseal mode,
-then initialize it.
-
 ## Uninstall
 
 ```bash
@@ -294,6 +424,9 @@ All the stored secrets are deleted, unless a backup exists.
 - `disable_mlock = true`: memory locking is not available to rootless
   containers and is not required with Raft storage. Make sure the node
   swap, if any, is encrypted.
+- The Prometheus metrics listener has no authentication and is bound to
+  the cluster VPN address only. Metrics hold counters and timings, not
+  secrets.
 - The `X-Forwarded-For` header set by Traefik is trusted, so audit logs
   record the real client address.
 - Enable the audit log in production. Audit entries are sent to the
