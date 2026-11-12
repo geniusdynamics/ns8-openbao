@@ -18,6 +18,18 @@ if not env.get("TRAEFIK_HOST"):
 
 # Let's Encrypt is not requested here: the clone might run on a node the
 # host name does not resolve to. It can be enabled again from Settings.
+# A clone starts as a standalone, single-node OpenBao: detach the copied
+# Raft data of an HA instance from its cluster (see restore-module), and
+# drop ports allocated to the original instance.
+if openbao.ha_role(env) != "standalone":
+    agent.set_env("OPENBAO_HA_ROLE", "standalone")
+    for var in ["OPENBAO_HA_CLUSTER", "OPENBAO_HA_JOIN", "OPENBAO_HA_JOIN_ADDRS"]:
+        agent.set_env(var, "")
+    agent.set_env("OPENBAO_RAFT_RECOVER", "True")
+for var in ["OPENBAO_CLUSTER_PORT", "OPENBAO_VPN_API_PORT"]:
+    if env.get(var):
+        agent.unset_env(var)
+
 request = {
     "host": env["TRAEFIK_HOST"],
     "http2https": openbao.is_true(env["TRAEFIK_HTTP2HTTPS"]),

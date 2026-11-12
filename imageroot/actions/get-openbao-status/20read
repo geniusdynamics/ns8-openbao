@@ -24,6 +24,29 @@ if host and not openbao.public_access(env):
     vpn = openbao.vpn_api_endpoint(env)
     ui_url = "http://{}:{}/ui/".format(*vpn) if vpn else ""
 
+
+
+def ha_status():
+    role = openbao.ha_role(env)
+    info = {
+        "role": role,
+        "cluster": env["OPENBAO_HA_CLUSTER"],
+        "node_id": openbao.raft_node_id(env),
+        "raft_address": openbao.raft_address(env),
+        "is_self": None,
+        "leader_address": "",
+        "peers": None,
+    }
+    if role == "standalone" or not status or status.get("sealed"):
+        return info
+    leader = openbao.ha_leader_status() or {}
+    info["is_self"] = leader.get("is_self")
+    info["leader_address"] = leader.get("leader_address", "")
+    # Needs the module token, which members do not have
+    info["peers"] = openbao.raft_peers()
+    return info
+
+
 result = {
     "service_active": active,
     "reachable": status is not None,
@@ -43,6 +66,7 @@ result = {
     "ui_url": ui_url,
     "seal_migration_from": env["OPENBAO_SEAL_MIGRATION_FROM"],
     "migration": bool(status and status.get("migration")),
+    "ha": ha_status(),
 }
 
 json.dump(result, fp=sys.stdout)

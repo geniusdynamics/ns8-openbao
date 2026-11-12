@@ -51,7 +51,13 @@
             "transit_tls_skip_verify": false,
             "transit_token_present": false,
             "public_access": true,
-            "snapshot_keep": 0
+            "snapshot_keep": 0,
+            "ha_role": "standalone",
+            "ha_join": "",
+            "ha_cluster": "",
+            "raft_node_id": "ns8-openbao",
+            "raft_address": "127.0.0.1:8201",
+            "ha_candidates": []
         }
     ],
     "type": "object",
@@ -80,7 +86,13 @@
         "transit_tls_skip_verify",
         "transit_token_present",
         "public_access",
-        "snapshot_keep"
+        "snapshot_keep",
+        "ha_role",
+        "ha_join",
+        "ha_cluster",
+        "raft_node_id",
+        "raft_address",
+        "ha_candidates"
     ],
     "properties": {
         "host": {
@@ -237,6 +249,85 @@
         "snapshot_keep": {
             "type": "integer",
             "minimum": 0
+        },
+        "ha_role": {
+            "type": "string",
+            "enum": [
+                "standalone",
+                "primary",
+                "member"
+            ],
+            "description": "High availability role (experimental)"
+        },
+        "ha_join": {
+            "type": "string",
+            "description": "Module ID of the instance a member joined"
+        },
+        "ha_cluster": {
+            "type": "string",
+            "description": "ID of the HA cluster: the module ID of its primary. Empty when standalone"
+        },
+        "raft_node_id": {
+            "type": "string",
+            "description": "Raft node ID of this instance, ns8-openbao unless it joined as a member"
+        },
+        "raft_address": {
+            "type": "string",
+            "description": "Raft cluster address of this instance"
+        },
+        "ha_candidates": {
+            "type": "array",
+            "description": "Other OpenBao instances with high availability enabled, which a new instance can join",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "module_id": {
+                        "type": "string"
+                    },
+                    "node": {
+                        "type": "string"
+                    },
+                    "ui_name": {
+                        "type": "string"
+                    },
+                    "ha_cluster": {
+                        "type": "string"
+                    },
+                    "ha_role": {
+                        "type": "string"
+                    },
+                    "raft_node_id": {
+                        "type": "string"
+                    },
+                    "api_url": {
+                        "type": "string"
+                    },
+                    "cluster_address": {
+                        "type": "string"
+                    },
+                    "unseal_mode": {
+                        "type": "string"
+                    },
+                    "transit_address": {
+                        "type": "string"
+                    },
+                    "transit_mount": {
+                        "type": "string"
+                    },
+                    "transit_key": {
+                        "type": "string"
+                    },
+                    "transit_tls_skip_verify": {
+                        "type": "boolean"
+                    }
+                },
+                "required": [
+                    "module_id",
+                    "ha_cluster",
+                    "api_url",
+                    "unseal_mode"
+                ]
+            }
         }
     }
 }

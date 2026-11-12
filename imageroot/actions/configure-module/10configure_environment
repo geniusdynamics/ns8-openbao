@@ -62,6 +62,50 @@ for field, var in [
         agent.set_env(var, request[field])
 set_bool("OPENBAO_TRANSIT_TLS_SKIP_VERIFY", "transit_tls_skip_verify")
 
+# High availability (experimental), validated by 01validate
+previous_role = openbao.ha_role(env)
+role = request.get("ha_role", previous_role)
+agent.set_env("OPENBAO_HA_ROLE", role)
+if role == "primary":
+    # Members join through the cluster network API
+    agent.set_env("OPENBAO_VPN_API", "True")
+    if previous_role != "primary" or not env["OPENBAO_HA_CLUSTER"]:
+        agent.set_env("OPENBAO_HA_CLUSTER", os.environ["MODULE_ID"])
+    agent.set_env("OPENBAO_HA_JOIN", "")
+    agent.set_env("OPENBAO_HA_JOIN_ADDRS", "")
+    if previous_role == "standalone" and openbao.storage_state() == "initialized":
+        # Move this node's Raft entry from loopback to the VPN address
+        agent.set_env("OPENBAO_RAFT_RECOVER", "True")
+elif role == "member":
+    join = request.get("ha_join", env["OPENBAO_HA_JOIN"])
+    instances = openbao.list_cluster_instances()
+    target = next(i for i in instances if i["module_id"] == join)
+    addresses = [target["api_url"]] + [
+        i["api_url"] for i in instances
+        if i["ha_cluster"] == target["ha_cluster"] and i["api_url"] and i is not target]
+    agent.set_env("OPENBAO_HA_JOIN", join)
+    agent.set_env("OPENBAO_HA_CLUSTER", target["ha_cluster"])
+    agent.set_env("OPENBAO_HA_JOIN_ADDRS", ",".join(addresses))
+    if previous_role != "member" or not env["OPENBAO_RAFT_NODE_ID"]:
+        agent.set_env("OPENBAO_RAFT_NODE_ID", os.environ["MODULE_ID"])
+    # Same seal as the cluster; a member never initializes itself
+    agent.set_env("OPENBAO_UNSEAL_MODE", target["unseal_mode"])
+    if target["unseal_mode"] == "transit":
+        agent.set_env("OPENBAO_TRANSIT_ADDRESS", target["transit_address"])
+        agent.set_env("OPENBAO_TRANSIT_MOUNT", target["transit_mount"])
+        agent.set_env("OPENBAO_TRANSIT_KEY", target["transit_key"])
+        agent.set_env("OPENBAO_TRANSIT_TLS_SKIP_VERIFY", str(target["transit_tls_skip_verify"]))
+    agent.set_env("OPENBAO_AUTO_INITIALIZE", "False")
+else:
+    if previous_role == "primary" and openbao.storage_state() == "initialized":
+        # Move this node's Raft entry back to loopback (no members left)
+        agent.set_env("OPENBAO_RAFT_RECOVER", "True")
+    if previous_role == "member":
+        # Never joined (validated): forget the member node ID
+        agent.set_env("OPENBAO_RAFT_NODE_ID", "")
+    for var in ["OPENBAO_HA_CLUSTER", "OPENBAO_HA_JOIN", "OPENBAO_HA_JOIN_ADDRS"]:
+        agent.set_env(var, "")
+
 if "notify_recipients" in request:
     agent.set_env("OPENBAO_NOTIFY_RECIPIENTS", ",".join(request["notify_recipients"]))
 

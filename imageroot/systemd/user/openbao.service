@@ -9,7 +9,8 @@
 # the configured host name with TLS. The container reaches the node
 # ldapproxy for directory login at 10.0.2.2 (host loopback). The
 # Prometheus metrics listener is published on the node cluster VPN
-# address, for the NS8 metrics module.
+# address, for the NS8 metrics module. With high availability the Raft
+# cluster port is published on the node VPN address too.
 #
 [Unit]
 Description=OpenBao secrets manager
@@ -38,6 +39,7 @@ ExecStart=/usr/bin/podman run \
     --publish=127.0.0.1:${TCP_PORT}:8200 \
     $OPENBAO_PUBLISH_METRICS \
     $OPENBAO_PUBLISH_VPN_API \
+    $OPENBAO_PUBLISH_CLUSTER \
     --volume=openbao-data:/openbao/file:Z \
     --volume=%E/state/openbao-config:/openbao/config:ro,Z \
     --volume=%E/state/openbao-plugins:/openbao/plugins:ro,Z \

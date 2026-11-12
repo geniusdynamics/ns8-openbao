@@ -617,10 +617,56 @@ alternative:
 
 ## High availability
 
-Each instance is a single-node Raft cluster. Joining instances into one
-highly available cluster is designed but not implemented yet, because it
-needs testing on a real multi-node cluster: see
-[docs/high-availability.md](docs/high-availability.md).
+**Experimental.** Several OpenBao instances, normally on different nodes,
+can form one Raft cluster: one instance is active, the others are
+standbys that forward requests to it and take over if it stops. A single
+instance works exactly as before: nothing changes until a role is chosen.
+Design decisions and limits: [docs/high-availability.md](docs/high-availability.md).
+
+1. On the existing instance, *Settings*, *High availability*: choose
+   **Accept members** (`"ha_role": "primary"`). It needs manual or Transit
+   unseal. OpenBao restarts (unseal it again with manual unseal); if it is
+   initialized, its Raft address moves from loopback to the node VPN
+   address, keeping a copy of the previous Raft files.
+2. Install a new instance on another node and, in its setup wizard,
+   choose **Join an existing OpenBao** and the instance from the list
+   (`"ha_role": "member", "ha_join": "openbao1"`). The list comes from the
+   NS8 service discovery (`openbao-cluster` service providers).
+3. Manual unseal: unseal the new instance with the unseal keys of the
+   cluster; it completes the join when unsealed. Transit unseal: store the
+   Transit token on the new node first (`openbao-transit-token`); the
+   member unseals itself.
+4. Repeat for a third instance: a Raft cluster works while a majority of
+   its members runs, so 2 instances stop if either one stops.
+
+```bash
+api-cli run configure-module --agent module/openbao1 --data '{"host": "vault1.example.org", "ha_role": "primary"}'
+api-cli run configure-module --agent module/openbao2 --data '{"host": "vault2.example.org", "ha_role": "member", "ha_join": "openbao1"}'
+```
+
+The *Status* page shows the role, the active node and, with the module
+token, the Raft members.
+
+**Removing a member**: first remove its peer from the cluster with an
+administrator token, then remove its application. Removing a member
+application without removing its peer leaves the cluster counting a
+missing voter:
+
+```bash
+bao operator raft remove-peer openbao2
+```
+
+**Back to standalone**: a primary returns standalone only when it is the
+last Raft member. A member that joined cannot leave by configuration
+(its data belongs to the cluster): remove its peer and its application.
+
+**Backups and restore**: take backups of the primary, which has the
+module token for consistent snapshots. A restored or cloned instance
+always comes back standalone: its Raft configuration is rewritten as a
+single node before its first start.
+
+**Updates**: update the standby instances first and the active one last,
+as OpenBao recommends.
 
 ## Get the configuration and state
 
