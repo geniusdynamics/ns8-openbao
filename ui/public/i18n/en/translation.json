@@ -100,7 +100,6 @@
     "auto_initialize": "Initialize OpenBao automatically with directory login",
     "auto_initialize_warning_title": "No root token and no recovery keys",
     "auto_initialize_warning_description": "OpenBao initializes itself and members of the administrators group can log in at once. No root token or recovery keys are generated: after the first login, generate recovery keys with \"bao operator rotate-keys -init -target=recovery\" and store them in a safe place.",
-    "setup_ldap_description": "OpenBao is already initialized or uses manual unseal, so the module cannot configure it without an administrator token. After saving, run this command on the node and enter an OpenBao token when prompted. Run it again if the user domain credentials change.",
     "copy_to_clipboard": "Copy to clipboard",
     "copied_to_clipboard": "Copied to clipboard",
     "user_domain_not_found": "User domain not found",
@@ -122,7 +121,35 @@
     "test_email_sent": "Test email sent",
     "test_email_failed": "Cannot send the test email",
     "test_email_failed_description": "Check the SMTP smarthost settings and the system logs of the application.",
-    "ldap_plugin_missing": "The OpenBao LDAP auth plugin is not available on this node: update the module"
+    "ldap_plugin_missing": "The OpenBao LDAP auth plugin is not available on this node: update the module",
+    "ip_allowlist": "Allowed networks",
+    "ip_allowlist_helper": "One IP address or network (CIDR) per line. Leave empty to allow everybody",
+    "ip_allowlist_invalid": "Invalid IP address or network: {network}",
+    "ip_allowlist_warning_title": "Access is restricted",
+    "ip_allowlist_warning_description": "Only the listed networks can reach the OpenBao web UI and API, including applications that read secrets. Check that your own address is listed before saving.",
+    "group_policies": "Group policies",
+    "group_policies_description": "Give more directory groups access to OpenBao with a policy. Built-in policies are created by the module; you can also type the name of a policy created in OpenBao.",
+    "group": "Group",
+    "policy": "Policy",
+    "policy_placeholder": "Choose or type a policy",
+    "policy_user_input": "typed policy",
+    "add_group_policy": "Add group policy",
+    "remove_group_policy": "Remove",
+    "group_policy_incomplete": "Choose both a group and a policy in every row",
+    "ldap_group_not_found": "Group not found in the user domain: {group}",
+    "policy_ns8_admin": "Full administrative access",
+    "policy_ns8_secrets_rw": "Read and write secrets in secret/",
+    "policy_ns8_secrets_ro": "Read secrets in secret/",
+    "policy_ns8_pki_issuer": "Issue certificates from the internal CA",
+    "section_starter_kits": "Starter kits",
+    "starter_kits_description": "Components prepared for you when OpenBao initializes itself, or when you run the command below on an initialized OpenBao. Existing components are never changed.",
+    "kit_kv": "Key/value secrets store",
+    "kit_kv_description": "A key/value (version 2) store at secret/, for passwords and other application secrets.",
+    "kit_pki": "Internal certificate authority",
+    "kit_pki_description": "A root CA at pki/ and an ns8-server role to issue TLS certificates for internal services.",
+    "kit_approle": "Application login (AppRole)",
+    "kit_approle_description": "Lets applications and scripts log in with a role ID and a secret ID.",
+    "apply_config_description": "OpenBao is already initialized or uses manual unseal, so the module cannot change it without an administrator token. After saving, run this command on the server and enter an OpenBao token when prompted: it applies directory login, group policies and starter kits. Run it again after changing them, or if the user domain credentials change."
   },
   "about": {
     "title": "About"
@@ -215,6 +242,7 @@
     "manual_reminder_title": "Remember: manual unseal",
     "manual_reminder_description": "After every restart, update or reboot, open OpenBao and enter the unseal keys. The Status page and email notifications tell you when it is sealed.",
     "done_initialized": "The new configuration is applied.",
-    "done_setup_ldap": "To apply the directory login settings, run this command on the server and paste an OpenBao administrator token when asked:"
+    "done_setup_ldap": "To apply the directory login settings, run this command on the server and paste an OpenBao administrator token when asked:",
+    "kits_title": "Also prepare:"
   }
 }

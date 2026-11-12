@@ -24,7 +24,25 @@
                     "location": "internal"
                 }
             ],
-            "smarthost_enabled": true
+            "smarthost_enabled": true,
+            "ip_allowlist": [
+                "192.168.1.0/24"
+            ],
+            "ldap_group_policies": [
+                {
+                    "group": "Developers",
+                    "policy": "ns8-secrets-rw"
+                }
+            ],
+            "starter_kits": [
+                "kv"
+            ],
+            "builtin_policies": [
+                "ns8-admin",
+                "ns8-pki-issuer",
+                "ns8-secrets-ro",
+                "ns8-secrets-rw"
+            ]
         }
     ],
     "type": "object",
@@ -40,7 +58,11 @@
         "auto_initialize",
         "notify_recipients",
         "user_domains",
-        "smarthost_enabled"
+        "smarthost_enabled",
+        "ip_allowlist",
+        "ldap_group_policies",
+        "starter_kits",
+        "builtin_policies"
     ],
     "properties": {
         "host": {
@@ -123,6 +145,49 @@
         "smarthost_enabled": {
             "type": "boolean",
             "description": "The cluster SMTP smarthost is enabled, so email notifications can be sent"
+        },
+        "ip_allowlist": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "description": "Networks allowed through Traefik; empty: no restriction"
+        },
+        "ldap_group_policies": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": [
+                    "group",
+                    "policy"
+                ],
+                "properties": {
+                    "group": {
+                        "type": "string"
+                    },
+                    "policy": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "starter_kits": {
+            "type": "array",
+            "items": {
+                "type": "string",
+                "enum": [
+                    "kv",
+                    "pki",
+                    "approle"
+                ]
+            }
+        },
+        "builtin_policies": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "description": "Policies created by the module"
         }
     }
 }

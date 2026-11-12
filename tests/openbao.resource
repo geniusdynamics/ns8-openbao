@@ -36,3 +36,9 @@ OpenBao Should Be Active
     ${rc} =    Execute Command    curl -sS -f -o /dev/null -H 'Host: ${host}' http://127.0.0.1/v1/sys/health
     ...    return_rc=True  return_stdout=False
     Should Be Equal As Integers    ${rc}  0
+
+Route Should Be Forbidden
+    [Arguments]    ${host}
+    ${output}  ${rc} =    Execute Command    curl -sS -o /dev/null -w '%{http_code}' -H 'Host: ${host}' http://127.0.0.1/v1/sys/seal-status
+    ...    return_rc=True
+    Should Be Equal    ${output}    403

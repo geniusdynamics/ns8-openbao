@@ -16,6 +16,20 @@
             "auto_initialize": false,
             "notify_recipients": [
                 "security@example.org"
+            ],
+            "ip_allowlist": [
+                "192.168.1.0/24",
+                "10.0.0.5"
+            ],
+            "ldap_group_policies": [
+                {
+                    "group": "Developers",
+                    "policy": "ns8-secrets-rw"
+                }
+            ],
+            "starter_kits": [
+                "kv",
+                "pki"
             ]
         },
         {
@@ -96,6 +110,57 @@
                 "type": "string",
                 "format": "email",
                 "pattern": "^[^@\\s,]+@[^@\\s,]+$"
+            }
+        },
+        "ip_allowlist": {
+            "type": "array",
+            "title": "Allowed networks",
+            "description": "Client IP addresses or networks (CIDR) allowed to reach the OpenBao API and web UI through Traefik. Empty list: no restriction",
+            "maxItems": 100,
+            "uniqueItems": true,
+            "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 50
+            }
+        },
+        "ldap_group_policies": {
+            "type": "array",
+            "title": "Group policies",
+            "description": "Additional directory groups mapped to OpenBao policies, applied by self-initialization or by openbao-apply-config",
+            "maxItems": 100,
+            "items": {
+                "type": "object",
+                "required": [
+                    "group",
+                    "policy"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "group": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                    },
+                    "policy": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9_.-]{1,128}$"
+                    }
+                }
+            }
+        },
+        "starter_kits": {
+            "type": "array",
+            "title": "Starter kits",
+            "description": "Components prepared by self-initialization or by openbao-apply-config: 'kv' key/value v2 store at secret/, 'pki' internal certificate authority at pki/, 'approle' application login",
+            "uniqueItems": true,
+            "items": {
+                "type": "string",
+                "enum": [
+                    "kv",
+                    "pki",
+                    "approle"
+                ]
             }
         }
     }

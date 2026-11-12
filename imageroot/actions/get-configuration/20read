@@ -33,6 +33,10 @@ config = {
     "ldap_admin_group": env["OPENBAO_LDAP_ADMIN_GROUP"],
     "auto_initialize": openbao.is_true(env["OPENBAO_AUTO_INITIALIZE"]),
     "notify_recipients": openbao.notify_recipients(env),
+    "ip_allowlist": openbao.ip_allowlist(env),
+    "ldap_group_policies": openbao.ldap_group_policies(env),
+    "starter_kits": openbao.starter_kits(env),
+    "builtin_policies": sorted(openbao.BUILTIN_POLICIES),
     # Read-only information for the Settings page. Only names: the bind
     # credentials and the smarthost password are never returned.
     "user_domains": openbao.list_user_domains(),
