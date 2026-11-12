@@ -1,0 +1,28 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# Print the break-glass administrator token created by OpenBao
+# self-initialization. Run it on the node only when directory login does
+# not work:
+#
+#   runagent -m openbao1 openbao-breakglass-token
+#
+# The token has the ns8-admin policy and expires 32 days after the
+# initialization. Revoke it as soon as other administrator access works:
+#
+#   BAO_TOKEN=<token> bao token revoke -self
+#
+
+import os
+import sys
+import openbao
+
+if not os.path.exists(openbao.BREAKGLASS_TOKEN_FILE):
+    sys.exit("No break-glass token: OpenBao was not self-initialized by this module")
+
+print(open(openbao.BREAKGLASS_TOKEN_FILE, encoding="utf-8").read().strip())

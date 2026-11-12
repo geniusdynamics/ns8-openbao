@@ -20,6 +20,7 @@ def systemctl(*args):
     agent.run_helper("systemctl", "--user", *args).check_returncode()
 
 
+openbao.install_plugins()
 record = openbao.write_config()
 status = openbao.get_seal_status()
 change = openbao.required_change(record, initialized=bool(status and status.get("initialized")))

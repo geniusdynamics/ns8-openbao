@@ -1,0 +1,21 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# Copy the external OpenBao plugins (LDAP auth) from their images, pulled
+# by the node with the module, into the plugin directory. It runs as
+# ExecStartPre of openbao.service, before openbao-write-config. A missing
+# plugin is logged but never prevents OpenBao from starting.
+#
+
+import sys
+import openbao
+
+try:
+    openbao.install_plugins()
+except Exception as ex:
+    print(f"<3>Cannot install the OpenBao plugins: {ex}", file=sys.stderr)

@@ -1,5 +1,6 @@
 *** Settings ***
 Library    SSHLibrary
+Library    Collections
 Resource    openbao.resource
 
 *** Variables ***
@@ -38,6 +39,18 @@ Check if openbao initializes itself with directory login
     ...    return_rc=True  return_stdout=False
     Should Be Equal As Integers    ${rc}  0
     Wait Until Keyword Succeeds    60s    2s    OpenBao Should Be Active    ${HOST}
+
+Check if the LDAP auth plugin is installed from its image
+    ${rc} =    Execute Command    runagent -m ${module_id} test -x openbao-plugins/openbao-plugin-auth-ldap
+    ...    return_rc=True  return_stdout=False
+    Should Be Equal As Integers    ${rc}  0
+
+Check if the break-glass token gives administrator access
+    ${breakglass}  ${rc} =    Execute Command    runagent -m ${module_id} openbao-breakglass-token
+    ...    return_rc=True
+    Should Be Equal As Integers    ${rc}  0
+    &{auth} =    Bao Request    ${HOST}    GET    sys/auth    ${EMPTY}    ${breakglass}
+    Dictionary Should Contain Key    ${auth.data}    ldap/
 
 Check if the module is bound to the user domain
     ${output}  ${rc} =    Execute Command    redis-cli HGET cluster/module_domains ${module_id}
