@@ -1,0 +1,19 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# Declare the relation with the user domain: the core shows it in the
+# Domains and users page and grants this module access to the domain LDAP
+# endpoint. An empty list removes a previous binding.
+#
+
+import agent
+import openbao
+
+env = openbao.read_environment()
+domain = env["OPENBAO_USER_DOMAIN"]
+agent.bind_user_domains([domain] if domain else [], check=True)

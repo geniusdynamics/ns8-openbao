@@ -1,30 +1,42 @@
 #!/usr/bin/env python3
 
 #
-# Copyright (C) 2022 Nethesis S.r.l.
+# Copyright (C) 2026 Genius Dynamics
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 
-#
-# Read configuration
-#
-
+import json
 import os
 import sys
-import json
 import agent
+import openbao
 
-# Prepare return variable
-config = {}
+env = openbao.read_environment()
 
-# Read current configuration from the environment file
-config["host"] = os.getenv("TRAEFIK_HOST","")
-config["http2https"] = os.getenv("TRAEFIK_HTTP2HTTPS") == "True"
-config["lets_encrypt"] = os.getenv("TRAEFIK_LETS_ENCRYPT") == "True"
+route = agent.get_route(os.environ["MODULE_ID"]) if env.get("TRAEFIK_HOST") else {}
 
-# Dump the configuration to stdout
-# json.dump(config, fp=sys.stdout)
-if os.path.exists("openbao.env"): 
-	data = agent.read_envfile("openbao.env") 
- 
+try:
+    smarthost = agent.get_smarthost_settings(agent.redis_connect(use_replica=True))
+    smarthost_enabled = bool(smarthost.get("enabled"))
+except Exception as ex:
+    print(agent.SD_WARNING + f"Cannot read the smarthost settings: {ex}", file=sys.stderr)
+    smarthost_enabled = False
+
+config = {
+    "host": env.get("TRAEFIK_HOST", ""),
+    "http2https": openbao.is_true(env["TRAEFIK_HTTP2HTTPS"]),
+    "lets_encrypt": bool(route.get("lets_encrypt", False)),
+    "log_level": env["OPENBAO_LOG_LEVEL"],
+    "audit_log": openbao.is_true(env["OPENBAO_AUDIT_LOG"]),
+    "unseal_mode": env["OPENBAO_UNSEAL_MODE"],
+    "user_domain": env["OPENBAO_USER_DOMAIN"],
+    "ldap_admin_group": env["OPENBAO_LDAP_ADMIN_GROUP"],
+    "auto_initialize": openbao.is_true(env["OPENBAO_AUTO_INITIALIZE"]),
+    "notify_recipients": openbao.notify_recipients(env),
+    # Read-only information for the Settings page. Only names: the bind
+    # credentials and the smarthost password are never returned.
+    "user_domains": openbao.list_user_domains(),
+    "smarthost_enabled": smarthost_enabled,
+}
+
 json.dump(config, fp=sys.stdout)

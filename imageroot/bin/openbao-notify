@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# Email the configured recipients when OpenBao goes down or becomes
+# sealed, and again when it recovers. Run every 5 minutes by
+# openbao-notify.timer.
+#
+# A problem must be observed by two consecutive runs before an alert is
+# sent, so a short planned stop (for example the consistent backup copy
+# with automatic unseal) does not notify anybody.
+#
+
+import json
+import os
+import sys
+import openbao
+
+STATE_FILE = "openbao-notify-state.json"
+ALERT_CONDITIONS = ("down", "sealed")
+CONFIRMATIONS = 2
+
+env = openbao.read_environment()
+if not openbao.notify_recipients(env):
+    sys.exit(0)
+
+try:
+    with open(STATE_FILE, encoding="utf-8") as sfile:
+        state = json.load(sfile)
+except (FileNotFoundError, ValueError):
+    state = {}
+
+condition, status = openbao.server_condition(env)
+module_id = os.environ.get("MODULE_ID", "openbao")
+streak = state.get("streak", 0) + 1 if condition == state.get("condition") else 1
+alerted = state.get("alerted")
+
+
+def describe():
+    if condition == "down":
+        return ("OpenBao is down",
+                "The OpenBao server is not running or does not answer. Applications "
+                "cannot read their secrets.\n\nCheck the System logs page of the "
+                f"application, or run on the node:\n\n  runagent -m {module_id} "
+                "systemctl --user status openbao.service")
+    if status and status.get("type") == "shamir":
+        return ("OpenBao is sealed",
+                "OpenBao is sealed and secrets cannot be accessed until it is unsealed.\n\n"
+                f"Open the OpenBao web UI and enter {status.get('t')} of the "
+                f"{status.get('n')} unseal keys. Keys entered so far: {status.get('progress')}.")
+    return ("OpenBao is sealed",
+            "OpenBao is sealed and automatic unseal did not succeed. Check the "
+            "System logs page of the application.")
+
+
+if condition in ALERT_CONDITIONS:
+    if streak >= CONFIRMATIONS and alerted != condition:
+        subject, body = describe()
+        ok, error = openbao.send_notification(env, subject, body)
+        if ok:
+            alerted = condition
+            print(f"<4>Notification sent: {subject}", file=sys.stderr)
+        else:
+            print(f"<3>Cannot send the notification: {error}", file=sys.stderr)
+elif alerted:
+    ok, error = openbao.send_notification(
+        env, "OpenBao is available again",
+        f"OpenBao recovered: it is now {'unsealed and ready' if condition == 'ok' else condition}.")
+    if ok:
+        alerted = None
+        print("Recovery notification sent", file=sys.stderr)
+    else:
+        print(f"<3>Cannot send the notification: {error}", file=sys.stderr)
+
+openbao._write_file(STATE_FILE, json.dumps({
+    "condition": condition,
+    "streak": streak,
+    "alerted": alerted,
+}) + "\n", 0o644)

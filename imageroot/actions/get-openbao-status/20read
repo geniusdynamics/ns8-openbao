@@ -1,0 +1,37 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# Return the OpenBao server state. Only the unauthenticated seal-status
+# endpoint is used: no token or key is handled by the module.
+#
+
+import json
+import sys
+import openbao
+
+env = openbao.read_environment()
+host = env.get("TRAEFIK_HOST", "")
+active = openbao.service_is_active()
+status = openbao.get_seal_status() if active else None
+
+result = {
+    "service_active": active,
+    "reachable": status is not None,
+    "initialized": bool(status and status.get("initialized")),
+    "sealed": bool(status.get("sealed", True)) if status else True,
+    "seal_type": status.get("type", "") if status else "",
+    "version": status.get("version", "") if status else "",
+    "threshold": int(status.get("t", 0)) if status else 0,
+    "shares": int(status.get("n", 0)) if status else 0,
+    "progress": int(status.get("progress", 0)) if status else 0,
+    "unseal_mode": env["OPENBAO_UNSEAL_MODE"],
+    "user_domain": env["OPENBAO_USER_DOMAIN"],
+    "ui_url": f"https://{host}/ui/" if host else "",
+}
+
+json.dump(result, fp=sys.stdout)

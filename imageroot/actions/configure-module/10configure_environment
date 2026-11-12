@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+import json
+import os
+import sys
+import agent
+import openbao
+
+request = json.load(sys.stdin)
+env = openbao.read_environment()
+
+
+def set_bool(var, field):
+    value = request[field] if field in request else openbao.is_true(env[var])
+    agent.set_env(var, str(bool(value)))
+
+
+agent.set_env("TRAEFIK_HOST", request["host"])
+agent.set_env("TRAEFIK_HTTP2HTTPS", str(bool(request.get("http2https", True))))
+agent.set_env("OPENBAO_LOG_LEVEL", request.get("log_level", env["OPENBAO_LOG_LEVEL"]))
+set_bool("OPENBAO_AUDIT_LOG", "audit_log")
+agent.set_env("OPENBAO_UNSEAL_MODE", request.get("unseal_mode", env["OPENBAO_UNSEAL_MODE"]))
+
+user_domain = request.get("user_domain", env["OPENBAO_USER_DOMAIN"])
+agent.set_env("OPENBAO_USER_DOMAIN", user_domain)
+admin_group = request.get("ldap_admin_group", env["OPENBAO_LDAP_ADMIN_GROUP"]).strip()
+agent.set_env("OPENBAO_LDAP_ADMIN_GROUP", admin_group if user_domain else "")
+
+# Self-initialization only matters before OpenBao is initialized: drop the
+# flag afterwards, so the bind password is no longer passed to the server.
+auto_initialize = request.get("auto_initialize", openbao.is_true(env["OPENBAO_AUTO_INITIALIZE"]))
+if auto_initialize and openbao.storage_state() == "initialized":
+    print("OpenBao is already initialized: automatic initialization is ignored", file=sys.stderr)
+    auto_initialize = False
+agent.set_env("OPENBAO_AUTO_INITIALIZE", str(bool(auto_initialize)))
+
+if "notify_recipients" in request:
+    agent.set_env("OPENBAO_NOTIFY_RECIPIENTS", ",".join(request["notify_recipients"]))
+
+# Settings of previous module releases, no longer used
+for var in ["TRAEFIK_LETS_ENCRYPT"]:
+    if var in os.environ:
+        agent.unset_env(var)

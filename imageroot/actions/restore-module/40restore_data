@@ -1,0 +1,33 @@
+#!/bin/bash
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# With automatic unseal, module-dump-state saved a consistent copy of the
+# OpenBao storage taken while the server was stopped. It replaces the live
+# copy of the data volume restored by Restic.
+#
+
+set -e -o pipefail
+exec 1>&2
+
+if [[ ! -f openbao-data.tar ]]; then
+    echo "Using the OpenBao data volume restored by Restic"
+    exit 0
+fi
+
+if ! podman volume exists openbao-data; then
+    podman volume create openbao-data
+fi
+
+mountpoint=$(podman volume inspect --format '{{.Mountpoint}}' openbao-data)
+
+echo "Restoring the consistent OpenBao storage copy"
+# shellcheck disable=SC2016
+podman unshare sh -c 'find "$1" -mindepth 1 -delete && tar --numeric-owner -xpf "$2" -C "$1"' \
+    restore-openbao "${mountpoint}" openbao-data.tar
+
+rm -f openbao-data.tar
