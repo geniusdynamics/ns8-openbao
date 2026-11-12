@@ -64,6 +64,25 @@
                 $t("settings.enabled")
               }}</template>
             </NsToggle>
+            <cv-text-area
+              :label="$t('settings.ip_allowlist')"
+              :helper-text="$t('settings.ip_allowlist_helper')"
+              placeholder="192.168.1.0/24"
+              v-model="ipAllowlistText"
+              :invalid-message="error.ip_allowlist"
+              :disabled="isFormDisabled"
+              :rows="3"
+              class="mg-bottom maxwidth"
+              ref="ip_allowlist"
+            />
+            <NsInlineNotification
+              v-if="ipAllowlist.length"
+              kind="warning"
+              :title="$t('settings.ip_allowlist_warning_title')"
+              :description="$t('settings.ip_allowlist_warning_description')"
+              :showCloseButton="false"
+              class="maxwidth"
+            />
             <!-- unseal -->
             <h4 class="section-title">{{ $t("settings.section_unseal") }}</h4>
             <cv-radio-group
@@ -139,6 +158,66 @@
                 class="mg-bottom maxwidth"
                 ref="ldap_admin_group"
               />
+              <div class="maxwidth mg-bottom" ref="ldap_group_policies">
+                <p class="field-label">
+                  {{ $t("settings.group_policies") }}
+                </p>
+                <p class="section-description">
+                  {{ $t("settings.group_policies_description") }}
+                </p>
+                <div
+                  v-for="(row, index) in groupPolicies"
+                  :key="row.key"
+                  class="mapping-row"
+                >
+                  <NsComboBox
+                    v-model="row.group"
+                    :options="groupOptions"
+                    :title="index === 0 ? $t('settings.group') : ''"
+                    :label="$t('settings.ldap_admin_group_placeholder')"
+                    :acceptUserInput="true"
+                    :userInputLabel="$t('settings.group_user_input')"
+                    :disabled="isFormDisabled"
+                    class="mapping-field"
+                  />
+                  <NsComboBox
+                    v-model="row.policy"
+                    :options="policyOptions"
+                    :title="index === 0 ? $t('settings.policy') : ''"
+                    :label="$t('settings.policy_placeholder')"
+                    :acceptUserInput="true"
+                    :userInputLabel="$t('settings.policy_user_input')"
+                    :disabled="isFormDisabled"
+                    class="mapping-field"
+                  />
+                  <cv-icon-button
+                    kind="ghost"
+                    size="field"
+                    type="button"
+                    :icon="TrashCan20"
+                    :label="$t('settings.remove_group_policy')"
+                    tip-position="left"
+                    :disabled="isFormDisabled"
+                    class="mapping-remove"
+                    @click="removeGroupPolicy(index)"
+                  />
+                </div>
+                <NsButton
+                  kind="ghost"
+                  size="field"
+                  type="button"
+                  :icon="Add20"
+                  :disabled="isFormDisabled"
+                  @click="addGroupPolicy"
+                  >{{ $t("settings.add_group_policy") }}</NsButton
+                >
+                <NsInlineNotification
+                  v-if="error.ldap_group_policies"
+                  kind="error"
+                  :title="error.ldap_group_policies"
+                  :showCloseButton="false"
+                />
+              </div>
               <template v-if="canAutoInitialize">
                 <NsCheckbox
                   value="autoInitialize"
@@ -158,18 +237,6 @@
                   class="maxwidth"
                 />
               </template>
-              <div v-else class="maxwidth mg-bottom">
-                <p class="section-description">
-                  {{ $t("settings.setup_ldap_description") }}
-                </p>
-                <NsCodeSnippet
-                  :copyTooltip="$t('settings.copy_to_clipboard')"
-                  :copy-feedback="$t('settings.copied_to_clipboard')"
-                  :feedback-aria-label="$t('settings.copied_to_clipboard')"
-                  hideExpandButton
-                  >{{ setupLdapCommand }}</NsCodeSnippet
-                >
-              </div>
               <NsInlineNotification
                 v-if="error.auto_initialize"
                 kind="error"
@@ -178,6 +245,40 @@
                 class="maxwidth"
               />
             </template>
+            <!-- starter kits -->
+            <h4 class="section-title">
+              {{ $t("settings.section_starter_kits") }}
+            </h4>
+            <p class="section-description">
+              {{ $t("settings.starter_kits_description") }}
+            </p>
+            <div
+              v-for="kit in starterKitList"
+              :key="kit"
+              class="kit-item maxwidth"
+            >
+              <NsCheckbox
+                :value="kit"
+                v-model="starterKits"
+                :label="$t('settings.kit_' + kit)"
+                :disabled="isFormDisabled"
+              />
+              <p class="kit-description">
+                {{ $t("settings.kit_" + kit + "_description") }}
+              </p>
+            </div>
+            <div v-if="!canAutoInitialize" class="maxwidth mg-bottom">
+              <p class="section-description">
+                {{ $t("settings.apply_config_description") }}
+              </p>
+              <NsCodeSnippet
+                :copyTooltip="$t('settings.copy_to_clipboard')"
+                :copy-feedback="$t('settings.copied_to_clipboard')"
+                :feedback-aria-label="$t('settings.copied_to_clipboard')"
+                hideExpandButton
+                >{{ applyConfigCommand }}</NsCodeSnippet
+              >
+            </div>
             <!-- notifications -->
             <h4 class="section-title">
               {{ $t("settings.section_notifications") }}
@@ -336,6 +437,11 @@ export default {
       domainGroups: [],
       notifyRecipients: "",
       testEmailResult: null,
+      ipAllowlistText: "",
+      groupPolicies: [],
+      groupPolicyKey: 0,
+      starterKits: ["kv"],
+      starterKitList: ["kv", "pki", "approle"],
       isAdvancedOpen: false,
       savedConfig: null,
       openbaoStatus: null,
@@ -359,6 +465,8 @@ export default {
         ldap_admin_group: "",
         auto_initialize: "",
         notify_recipients: "",
+        ip_allowlist: "",
+        ldap_group_policies: "",
       },
     };
   },
@@ -374,6 +482,30 @@ export default {
     isUnsealModeLocked() {
       // The seal type is stored by OpenBao at initialization time
       return !!(this.openbaoStatus && this.openbaoStatus.initialized);
+    },
+    ipAllowlist() {
+      return this.ipAllowlistText
+        .split(/[\s,;]+/)
+        .map((n) => n.trim())
+        .filter((n) => n);
+    },
+    groupOptions() {
+      return this.domainGroups.map((g) => ({ name: g, label: g, value: g }));
+    },
+    policyOptions() {
+      const names =
+        (this.savedConfig && this.savedConfig.builtin_policies) || [];
+      return names.map((p) => ({
+        name: p,
+        label: p,
+        value: p,
+        description: this.$t("settings.policy_" + p.replace(/-/g, "_")),
+      }));
+    },
+    completeGroupPolicies() {
+      return this.groupPolicies
+        .filter((row) => row.group && row.policy)
+        .map((row) => ({ group: row.group.trim(), policy: row.policy.trim() }));
     },
     canAutoInitialize() {
       // self-initialization needs an auto-unseal mechanism and an
@@ -460,13 +592,24 @@ export default {
       this.unsealMode = config.unseal_mode;
       this.logLevel = config.log_level;
       this.isAuditLogEnabled = config.audit_log;
-      this.userDomain = config.user_domain;
-      this.ldapAdminGroup = config.ldap_admin_group;
+      // NsComboBox resolves a new value against its current options: set
+      // the values after the options computed from savedConfig are rendered
+      this.$nextTick(() => {
+        this.userDomain = config.user_domain;
+        this.ldapAdminGroup = config.ldap_admin_group;
+        if (this.userDomain) {
+          this.listDomainGroups();
+        }
+      });
       this.isAutoInitializeEnabled = config.auto_initialize;
       this.notifyRecipients = config.notify_recipients.join(", ");
-      if (this.userDomain) {
-        this.listDomainGroups();
-      }
+      this.ipAllowlistText = config.ip_allowlist.join("\n");
+      this.starterKits = [...config.starter_kits];
+      this.groupPolicies = config.ldap_group_policies.map((m) => ({
+        key: this.groupPolicyKey++,
+        group: m.group,
+        policy: m.policy,
+      }));
       this.loading.getConfiguration = false;
       this.focusElement("host");
     },
@@ -510,6 +653,16 @@ export default {
       this.openbaoStatus = taskResult.output;
       this.loading.getOpenbaoStatus = false;
     },
+    addGroupPolicy() {
+      this.groupPolicies.push({
+        key: this.groupPolicyKey++,
+        group: "",
+        policy: "",
+      });
+    },
+    removeGroupPolicy(index) {
+      this.groupPolicies.splice(index, 1);
+    },
     onUserDomainChange() {
       this.ldapAdminGroup = "";
       this.domainGroups = [];
@@ -537,6 +690,15 @@ export default {
         }
         isValidationOk = false;
       }
+      const incomplete = this.groupPolicies.some(
+        (row) => !!row.group !== !!row.policy
+      );
+      if (this.userDomain && incomplete) {
+        this.error.ldap_group_policies = this.$t(
+          "settings.group_policy_incomplete"
+        );
+        isValidationOk = false;
+      }
       if (isValidationOk && !this.validateRecipients()) {
         isValidationOk = false;
       }
@@ -555,6 +717,22 @@ export default {
         // set i18n error message
         this.error[param] = this.$t("settings." + validationError.error);
 
+        if (param.startsWith("ldap_group_policies")) {
+          this.error.ldap_group_policies = this.$t(
+            "settings." + validationError.error,
+            { group: validationError.value }
+          );
+          continue;
+        }
+        if (param.startsWith("ip_allowlist")) {
+          this.error.ip_allowlist = this.$t(
+            "settings." + validationError.error,
+            {
+              network: validationError.value,
+            }
+          );
+          continue;
+        }
         if (param.startsWith("notify_recipients")) {
           this.error.notify_recipients = this.$t("settings.invalid_email", {
             address: validationError.value,
@@ -617,6 +795,11 @@ export default {
               this.canAutoInitialize &&
               this.isAutoInitializeEnabled,
             notify_recipients: this.recipientList,
+            ip_allowlist: this.ipAllowlist,
+            ldap_group_policies: this.userDomain
+              ? this.completeGroupPolicies
+              : [],
+            starter_kits: this.starterKits,
           },
           extra: {
             title: this.$t("settings.configure_instance", {
@@ -675,6 +858,37 @@ export default {
 .section-description {
   max-width: 38rem;
   margin-bottom: $spacing-05;
+  color: $text-02;
+}
+
+.field-label {
+  font-size: 0.75rem;
+  color: $text-02;
+  margin-bottom: $spacing-03;
+}
+
+.mapping-row {
+  display: flex;
+  align-items: flex-end;
+  gap: $spacing-03;
+  margin-bottom: $spacing-03;
+}
+
+.mapping-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.mapping-remove {
+  flex: none;
+}
+
+.kit-item {
+  margin-bottom: $spacing-03;
+}
+
+.kit-description {
+  margin: 0 0 $spacing-03 $spacing-07;
   color: $text-02;
 }
 

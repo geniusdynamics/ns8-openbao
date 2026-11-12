@@ -26,6 +26,8 @@ The module runs OpenBao as a rootless container with:
 - [First-time setup](#first-time-setup)
 - [Unseal modes](#unseal-modes)
 - [Directory login (LDAP / Active Directory)](#directory-login-ldap--active-directory)
+- [Starter kits](#starter-kits)
+- [Applying settings that need a token](#applying-settings-that-need-a-token)
 - [Notifications and alerts](#notifications-and-alerts)
 - [Prometheus metrics](#prometheus-metrics)
 - [Get the configuration and state](#get-the-configuration-and-state)
@@ -68,7 +70,10 @@ api-cli run configure-module --agent module/openbao1 --data - <<EOF
   "user_domain": "ad.example.org",
   "ldap_admin_group": "Domain Admins",
   "auto_initialize": false,
-  "notify_recipients": ["security@example.org"]
+  "notify_recipients": ["security@example.org"],
+  "ip_allowlist": ["192.168.1.0/24"],
+  "ldap_group_policies": [{"group": "Developers", "policy": "ns8-secrets-rw"}],
+  "starter_kits": ["kv", "pki"]
 }
 EOF
 ```
@@ -90,6 +95,14 @@ Parameters:
   OpenBao initialize itself with directory login already configured
 - `notify_recipients`: email addresses notified when OpenBao is down or
   sealed. `[]` disables them. See [Notifications](#notifications-and-alerts)
+
+- `ip_allowlist`: client IP addresses or networks (CIDR) allowed to reach
+  the API and web UI through Traefik. `[]` (default) allows everybody.
+  Applications that read secrets through the host name must be listed too
+- `ldap_group_policies`: more directory groups mapped to OpenBao policies,
+  see [Group policies](#group-policies)
+- `starter_kits`: components prepared at initialization, any of `kv`
+  (default), `pki`, `approle`; see [Starter kits](#starter-kits)
 
 Omitted optional parameters keep their current value.
 
@@ -225,7 +238,7 @@ changes later:
    with administrator rights (the root token works):
 
    ```bash
-   runagent -m openbao1 openbao-setup-ldap
+   runagent -m openbao1 openbao-apply-config
    ```
 
 3. Members of the administrators group can now use **Log in with
@@ -327,15 +340,67 @@ How OpenBao gets this configuration depends on its state, see
   requires automatic unseal and an uninitialized server. The module checks
   that the group exists before saving, because a wrong group would leave a
   self-initialized OpenBao without administrators.
-- **`openbao-setup-ldap`** ([setup D](#d-adding-directory-login-later)):
+- **`openbao-apply-config`** ([setup D](#d-adding-directory-login-later)):
   for an initialized server, or with manual unseal. The module cannot
   change OpenBao without an administrator token, and tokens must never
   pass through module actions: the command prompts for a token on the node
   (or reads `BAO_TOKEN`), applies the configuration and forgets the token.
 
+### Group policies
+
+Besides the administrators group (`ns8-admin`), map other directory
+groups to policies in *Settings*, *Group policies*. The module creates
+these built-in policies:
+
+| Policy | Access |
+|---|---|
+| `ns8-admin` | everything |
+| `ns8-secrets-rw` | read and write the `secret/` key/value store |
+| `ns8-secrets-ro` | read the `secret/` key/value store |
+| `ns8-pki-issuer` | issue certificates with the `pki/roles/ns8-server` role |
+
+The name of a policy created in OpenBao can be typed too. A group may
+appear in several rows to get several policies.
+
+Mappings need an administrator token to be written, so they are applied
+by the self-initialization or, on an initialized server, by
+`openbao-apply-config`. Run it again after changing them: it also removes
+the mappings it created before and that are no longer configured, and
+leaves mappings created by hand untouched.
+
 OpenBao keeps its own copy of the LDAP connection settings. If the domain
 bind credentials or servers change, the module logs a warning, sends a
-notification and asks to run `openbao-setup-ldap` again.
+notification and asks to run `openbao-apply-config` again.
+
+## Starter kits
+
+Choose in *Settings* (or in the wizard, for automatic initialization)
+what OpenBao should be prepared with:
+
+| Kit | Prepares |
+|---|---|
+| `kv` (default) | key/value version 2 store at `secret/` |
+| `pki` | internal root CA at `pki/` (EC P-384, 10 years), issuing and CRL URLs on the host name, and the `ns8-server` role (any name, server and client usage, 30 days, maximum 90) |
+| `approle` | the AppRole auth method at `approle/`, for applications and scripts |
+
+Kits are applied by the self-initialization, or on an initialized server
+by `openbao-apply-config`, which skips what already exists: an enabled
+mount or an existing PKI issuer is never changed. Unchecking a kit does
+not remove anything.
+
+## Applying settings that need a token
+
+The module never holds an OpenBao administrator token. Directory login,
+group policies and starter kits are written by the self-initialization
+or, afterwards, by this node command, which reads a token from the
+terminal (or from `BAO_TOKEN`), applies everything idempotently and
+forgets the token:
+
+```bash
+runagent -m openbao1 openbao-apply-config
+```
+
+`openbao-setup-ldap`, the command name of release 1.0.0, still works.
 
 ## Notifications and alerts
 
@@ -454,6 +519,8 @@ All the stored secrets are deleted, unless a backup exists.
 
 - The OpenBao listener is bound to `127.0.0.1` on the node; TLS is
   terminated by Traefik. Leave `http2https` enabled.
+- Restrict the networks that can reach OpenBao with `ip_allowlist` when
+  its clients are known.
 - The container runs as the unprivileged `openbao` user, with all
   capabilities dropped and `no-new-privileges`.
 - `disable_mlock = true`: memory locking is not available to rootless

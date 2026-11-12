@@ -49,7 +49,13 @@ DEFAULTS = {
     "OPENBAO_LDAP_ADMIN_GROUP": "",
     "OPENBAO_AUTO_INITIALIZE": "False",
     "OPENBAO_NOTIFY_RECIPIENTS": "",
+    "OPENBAO_IP_ALLOWLIST": "",
+    "OPENBAO_LDAP_GROUP_POLICIES": "",
+    "OPENBAO_STARTER_KITS": "kv",
 }
+
+STARTER_KITS = ["kv", "pki", "approle"]
+APPLIED_GROUPS_FILE = "openbao-ldap-groups-applied.json"
 
 # Policy granted to the directory group of OpenBao administrators
 ADMIN_POLICY_NAME = "ns8-admin"
@@ -59,6 +65,35 @@ path "*" {
   capabilities = ["create", "read", "update", "patch", "delete", "list", "scan", "sudo"]
 }
 """
+# Policies created by the module, offered in the group mapping table
+BUILTIN_POLICIES = {
+    "ns8-admin": ADMIN_POLICY,
+    "ns8-secrets-rw": """# Read and write the secret/ key/value (v2) store
+path "secret/data/*" {
+  capabilities = ["create", "read", "update", "patch", "delete", "list"]
+}
+path "secret/metadata/*" {
+  capabilities = ["read", "list", "delete"]
+}
+""",
+    "ns8-secrets-ro": """# Read the secret/ key/value (v2) store
+path "secret/data/*" {
+  capabilities = ["read", "list"]
+}
+path "secret/metadata/*" {
+  capabilities = ["read", "list"]
+}
+""",
+    "ns8-pki-issuer": """# Issue certificates with the role of the internal PKI starter kit
+path "pki/issue/ns8-server" {
+  capabilities = ["create", "update"]
+}
+path "pki/cert/ca" {
+  capabilities = ["read"]
+}
+""",
+}
+
 LDAP_BIND_PASSWORD_VAR = "NS8_LDAP_BIND_PASSWORD"
 BREAKGLASS_TOKEN_VAR = "NS8_BREAKGLASS_TOKEN"
 # The break-glass token expires by itself: the token store maximum TTL
@@ -414,14 +449,13 @@ def directory_login_requests(params, admin_group, bindpass, container=True):
     ]
 
 
-def render_initialize(params, admin_group):
+def render_initialize(params, env):
     """Return the JSON text of the self-initialization configuration.
 
     If any request fails without allow_failure, OpenBao stays initialized
     but refuses to unseal: only the admin policy and the break-glass token
-    are mandatory, and both are purely local operations. Directory login
-    and the key/value store may fail; the break-glass token then lets an
-    administrator fix the configuration.
+    are mandatory, and both are purely local operations. Everything else
+    may fail; the break-glass token then lets an administrator fix it.
     """
     bindpass = {
         "eval_source": "env",
@@ -429,15 +463,20 @@ def render_initialize(params, admin_group):
         "env_var": LDAP_BIND_PASSWORD_VAR,
         "require_present": True,
     }
-    login = directory_login_requests(params, admin_group, bindpass)
     requests = []
+
+    def add(req, allow_failure):
+        body = {"operation": req["operation"], "path": req["path"], "data": req["data"]}
+        if allow_failure:
+            body["allow_failure"] = True
+        requests.append({req["name"]: body})
+
+    login = directory_login_requests(params, env["OPENBAO_LDAP_ADMIN_GROUP"], bindpass)
     # 1. administrator policy (mandatory)
-    policy = login[0]
-    requests.append({policy["name"]: {
-        "operation": policy["operation"], "path": policy["path"], "data": policy["data"],
-    }})
+    add(login[0], False)
     # 2. break-glass administrator token (mandatory)
-    requests.append({"ns8-breakglass-token": {
+    add({
+        "name": "ns8-breakglass-token",
         "operation": "update",
         "path": "auth/token/create-orphan",
         "data": {
@@ -448,25 +487,22 @@ def render_initialize(params, admin_group):
                 "require_present": True,
             },
             "policies": [ADMIN_POLICY_NAME],
-            "no_default_policy": False,
             "display_name": "ns8-breakglass",
             "ttl": BREAKGLASS_TOKEN_TTL,
             "renewable": False,
         },
-    }})
-    # 3. directory login (allowed to fail)
-    for req in login[1:]:
-        requests.append({req["name"]: {
-            "operation": req["operation"], "path": req["path"], "data": req["data"],
-            "allow_failure": True,
-        }})
-    # 4. a ready-to-use key/value store (allowed to fail)
-    requests.append({"ns8-kv-mount": {
-        "operation": "update",
-        "path": "sys/mounts/secret",
-        "data": {"type": "kv", "description": "Key/value secrets", "options": {"version": "2"}},
-        "allow_failure": True,
-    }})
+    }, False)
+    # 3. the other built-in policies, directory login, group mappings and
+    #    starter kits (allowed to fail)
+    for req in policy_requests():
+        if req["path"] != login[0]["path"]:
+            add(req, True)
+    add(login[1], True)  # ldap auth mount
+    add(login[2], True)  # ldap auth configuration
+    for req in group_requests(group_policy_map(env)):
+        add(req, True)
+    for req in kit_requests(starter_kits(env), env.get("TRAEFIK_HOST", "")):
+        add(req, True)
     return json.dumps({"initialize": [{"ns8-directory-login": {"request": requests}}]}, indent=2) + "\n"
 
 
@@ -610,7 +646,7 @@ def render_config(env):
         elif "ldap" not in plugins:
             log("Self-initialization skipped: the LDAP auth plugin is not installed", "<4>")
         else:
-            init_text = render_initialize(params, env["OPENBAO_LDAP_ADMIN_GROUP"])
+            init_text = render_initialize(params, env)
             init_env.append(f"{LDAP_BIND_PASSWORD_VAR}={params['bind_password']}")
             init_env.append(f"{BREAKGLASS_TOKEN_VAR}={ensure_breakglass_token()}")
 
@@ -699,6 +735,117 @@ def required_change(record, initialized=True):
 
 def notify_recipients(env):
     return [r for r in env.get("OPENBAO_NOTIFY_RECIPIENTS", "").split(",") if r]
+
+
+def ip_allowlist(env):
+    return [n for n in env.get("OPENBAO_IP_ALLOWLIST", "").split(",") if n]
+
+
+def starter_kits(env):
+    return [k for k in env.get("OPENBAO_STARTER_KITS", "").split(",") if k in STARTER_KITS]
+
+
+def encode_group_policies(mappings):
+    """Encode [{group, policy}] for the environment file (no quotes/spaces)."""
+    return urllib.parse.quote(json.dumps(mappings, separators=(",", ":")), safe="")
+
+
+def ldap_group_policies(env):
+    """Return the [{group, policy}] mapping of directory groups to policies."""
+    raw = env.get("OPENBAO_LDAP_GROUP_POLICIES", "")
+    if not raw:
+        return []
+    try:
+        mappings = json.loads(urllib.parse.unquote(raw))
+        return [m for m in mappings if m.get("group") and m.get("policy")]
+    except (ValueError, AttributeError):
+        log("Invalid OPENBAO_LDAP_GROUP_POLICIES value: ignored", "<4>")
+        return []
+
+
+def group_policy_map(env):
+    """Return {group: [policies]}: the administrators group plus the mapping table."""
+    groups = {}
+    admin_group = env.get("OPENBAO_LDAP_ADMIN_GROUP", "")
+    if admin_group:
+        groups[admin_group] = [ADMIN_POLICY_NAME]
+    for mapping in ldap_group_policies(env):
+        policies = groups.setdefault(mapping["group"], [])
+        if mapping["policy"] not in policies:
+            policies.append(mapping["policy"])
+    return groups
+
+
+def policy_requests():
+    """Requests that create or update the built-in policies."""
+    return [{
+        "name": f"policy-{name}",
+        "operation": "update",
+        "path": f"sys/policies/acl/{name}",
+        "data": {"policy": text},
+    } for name, text in BUILTIN_POLICIES.items()]
+
+
+def group_requests(groups):
+    """Requests that map directory groups to policies."""
+    return [{
+        "name": "ldap-group-" + "".join(c if c.isalnum() else "-" for c in group.lower()),
+        "operation": "update",
+        "path": "auth/ldap/groups/" + group,
+        "data": {"policies": policies},
+    } for group, policies in groups.items()]
+
+
+def kit_requests(kits, host):
+    """Requests of the starter kits. Each is idempotent on a fresh server."""
+    requests = []
+    if "kv" in kits:
+        requests.append({
+            "name": "kit-kv-mount",
+            "operation": "update",
+            "path": "sys/mounts/secret",
+            "data": {"type": "kv", "description": "Key/value secrets", "options": {"version": "2"}},
+        })
+    if "pki" in kits:
+        base = f"https://{host}/v1/pki" if host else ""
+        requests.append({
+            "name": "kit-pki-mount",
+            "operation": "update",
+            "path": "sys/mounts/pki",
+            "data": {"type": "pki", "description": "Internal certificate authority",
+                     "config": {"max_lease_ttl": "87600h"}},
+        })
+        requests.append({
+            "name": "kit-pki-root",
+            "operation": "update",
+            "path": "pki/root/generate/internal",
+            "data": {"common_name": f"{host or 'OpenBao'} internal root CA",
+                     "issuer_name": "ns8-root", "ttl": "87600h",
+                     "key_type": "ec", "key_bits": 384},
+        })
+        if base:
+            requests.append({
+                "name": "kit-pki-urls",
+                "operation": "update",
+                "path": "pki/config/urls",
+                "data": {"issuing_certificates": [f"{base}/ca"],
+                         "crl_distribution_points": [f"{base}/crl"]},
+            })
+        requests.append({
+            "name": "kit-pki-role",
+            "operation": "update",
+            "path": "pki/roles/ns8-server",
+            "data": {"allow_any_name": True, "server_flag": True, "client_flag": True,
+                     "key_type": "ec", "key_bits": 256, "ttl": "720h", "max_ttl": "2160h"},
+        })
+    if "approle" in kits:
+        requests.append({
+            "name": "kit-approle",
+            "operation": "update",
+            "path": "sys/auth/approle",
+            "data": {"type": "approle", "description": "Application login"},
+        })
+    return requests
 
 
 def send_notification(env, subject, body, recipients=None):

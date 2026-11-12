@@ -1,6 +1,7 @@
 *** Settings ***
 Library    SSHLibrary
 Library    String
+Library    Collections
 Resource    openbao.resource
 
 *** Variables ***
@@ -133,6 +134,28 @@ Check if a settings change is applied without sealing openbao
     Should Be Equal As Integers    ${rc}  0
     &{status} =    Seal Status    ${HOST}
     Should Be Equal    ${status.sealed}    ${False}
+
+Check if the IP allow-list restricts access
+    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host": "${HOST}", "http2https": false, "ip_allowlist": ["192.0.2.0/24"]}'
+    ...    return_rc=True  return_stdout=False
+    Should Be Equal As Integers    ${rc}  0
+    Wait Until Keyword Succeeds    20s    2s    Route Should Be Forbidden    ${HOST}
+    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host": "${HOST}", "http2https": false, "ip_allowlist": []}'
+    ...    return_rc=True  return_stdout=False
+    Should Be Equal As Integers    ${rc}  0
+    Wait Until Keyword Succeeds    20s    2s    OpenBao Should Be Active    ${HOST}
+
+Check if openbao-apply-config applies the starter kits with a token
+    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host": "${HOST}", "http2https": false, "starter_kits": ["kv", "approle"]}'
+    ...    return_rc=True  return_stdout=False
+    Should Be Equal As Integers    ${rc}  0
+    ${output}  ${rc} =    Execute Command    runagent -m ${module_id} env BAO_TOKEN=${root_token} openbao-apply-config
+    ...    return_rc=True
+    Should Be Equal As Integers    ${rc}  0
+    &{auth} =    Bao Request    ${HOST}    GET    sys/auth    ${EMPTY}    ${root_token}
+    Dictionary Should Contain Key    ${auth.data}    approle/
+    &{policy} =    Bao Request    ${HOST}    GET    sys/policies/acl/ns8-secrets-ro    ${EMPTY}    ${root_token}
+    Should Contain    ${policy.data.policy}    secret/data
 
 Check if secrets survive a restart with manual unseal
     ${rc} =    Execute Command    runagent -m ${module_id} systemctl --user restart openbao.service

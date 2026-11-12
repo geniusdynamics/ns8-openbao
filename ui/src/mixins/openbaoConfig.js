@@ -63,8 +63,8 @@ export default {
         .map((r) => r.trim())
         .filter((r) => r);
     },
-    setupLdapCommand() {
-      return `runagent -m ${this.instanceName} openbao-setup-ldap`;
+    applyConfigCommand() {
+      return `runagent -m ${this.instanceName} openbao-apply-config`;
     },
   },
   methods: {

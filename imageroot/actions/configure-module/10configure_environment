@@ -5,6 +5,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 
+import ipaddress
 import json
 import os
 import sys
@@ -38,6 +39,15 @@ if auto_initialize and openbao.storage_state() == "initialized":
     print("OpenBao is already initialized: automatic initialization is ignored", file=sys.stderr)
     auto_initialize = False
 agent.set_env("OPENBAO_AUTO_INITIALIZE", str(bool(auto_initialize)))
+
+if "ip_allowlist" in request:
+    agent.set_env("OPENBAO_IP_ALLOWLIST", ",".join(
+        str(ipaddress.ip_network(n, strict=False)) for n in request["ip_allowlist"]))
+if "ldap_group_policies" in request:
+    agent.set_env("OPENBAO_LDAP_GROUP_POLICIES",
+                  openbao.encode_group_policies(request["ldap_group_policies"]))
+if "starter_kits" in request:
+    agent.set_env("OPENBAO_STARTER_KITS", ",".join(request["starter_kits"]))
 
 if "notify_recipients" in request:
     agent.set_env("OPENBAO_NOTIFY_RECIPIENTS", ",".join(request["notify_recipients"]))

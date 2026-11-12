@@ -9,6 +9,7 @@ import json
 import os
 import sys
 import agent
+import openbao
 
 request = json.load(sys.stdin)
 
@@ -22,6 +23,8 @@ route = {
     "lets_encrypt_check": True,
     "lets_encrypt_cleanup": True,
 }
+# Always send the list: an empty list removes a previous restriction
+route["ip_allowlist"] = openbao.ip_allowlist(openbao.read_environment())
 if "lets_encrypt" in request:
     route["lets_encrypt"] = request["lets_encrypt"]
 
