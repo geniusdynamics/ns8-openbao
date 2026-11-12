@@ -20,6 +20,7 @@ import secrets
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 # Files in the state directory
@@ -27,6 +28,7 @@ ENVIRONMENT_FILE = "environment"
 CONFIG_DIR = "openbao-config"  # mounted read-only on /openbao/config
 CONFIG_FILE = CONFIG_DIR + "/openbao.hcl"
 APPLIED_FILE = "openbao-applied.json"  # configuration loaded by the server
+INIT_FILE = CONFIG_DIR + "/ns8-initialize.json"  # self-initialization requests
 CONTAINER_ENV_FILE = "openbao-container.env"
 SEAL_KEY_FILE = "openbao-seal.key"
 
@@ -39,7 +41,24 @@ DEFAULTS = {
     "OPENBAO_AUDIT_LOG": "False",
     "OPENBAO_UNSEAL_MODE": "manual",
     "TRAEFIK_HTTP2HTTPS": "True",
+    "OPENBAO_USER_DOMAIN": "",
+    "OPENBAO_LDAP_ADMIN_GROUP": "",
+    "OPENBAO_AUTO_INITIALIZE": "False",
+    "OPENBAO_NOTIFY_RECIPIENTS": "",
 }
+
+# Policy granted to the directory group of OpenBao administrators
+ADMIN_POLICY_NAME = "ns8-admin"
+ADMIN_POLICY = """# Full administrative access, granted to the NethServer 8 directory
+# group selected in the application settings.
+path "*" {
+  capabilities = ["create", "read", "update", "patch", "delete", "list", "scan", "sudo"]
+}
+"""
+LDAP_BIND_PASSWORD_VAR = "NS8_LDAP_BIND_PASSWORD"
+# Podman translates this address to the node loopback interface, where
+# the NS8 ldapproxy listens (slirp4netns allow_host_loopback=true)
+HOST_LOOPBACK_ADDR = "10.0.2.2"
 
 # The Raft node ID and cluster address must never change: they are stored
 # inside the Raft data. Do not derive them from MODULE_ID, otherwise a
@@ -136,11 +155,159 @@ def _hcl_string(value):
     return json.dumps(str(value))
 
 
-def render_config(env):
-    """Return (config_text, container_env_text, restart_signature).
+def discover_ldap(domain):
+    """Return the LDAP connection parameters of an NS8 user domain, or None.
 
-    restart_signature covers the settings that OpenBao cannot reload with
-    SIGHUP. log_level and declarative audit devices are reloadable.
+    The endpoint is the local ldapproxy port: it relays to the domain
+    servers with TLS and fails over between them.
+    """
+    if not domain:
+        return None
+    try:
+        from agent.ldapproxy import Ldapproxy
+        params = Ldapproxy().get_domain(domain)
+    except Exception as ex:
+        log(f"Cannot read the settings of user domain {domain}: {ex}", "<4>")
+        return None
+    if not params or params.get("schema") not in ("ad", "rfc2307"):
+        log(f"User domain {domain} is not available or has an unknown schema", "<4>")
+        return None
+    return params
+
+
+def list_user_domains():
+    """Return [{name, schema, location}] of the cluster user domains."""
+    try:
+        from agent.ldapproxy import Ldapproxy
+        proxy = Ldapproxy()
+        names = proxy.get_domains_list()
+        domains = []
+        for name in sorted(names):
+            params = proxy.domains.get(name, {}) if proxy.domains else {}
+            domains.append({
+                "name": name,
+                "schema": params.get("schema", ""),
+                "location": params.get("location", ""),
+            })
+        return domains
+    except Exception as ex:
+        log(f"Cannot list the user domains: {ex}", "<4>")
+        return []
+
+
+def ldap_auth_config(params, bindpass, container=True):
+    """Return the data of the auth/ldap/config request.
+
+    The search settings mirror the NS8 core LDAP client (agent.ldapclient):
+    Active Directory uses sAMAccountName and group "member" attributes,
+    RFC2307 (OpenLDAP) uses uid and posixGroup "memberUid".
+    """
+    host = HOST_LOOPBACK_ADDR if container else params["host"]
+    config = {
+        "url": f"ldap://{host}:{params['port']}",
+        "binddn": params["bind_dn"],
+        "bindpass": bindpass,
+        "userdn": params["base_dn"],
+        "groupdn": params["base_dn"],
+        "starttls": False,
+        "deny_null_bind": True,
+        "case_sensitive_names": False,
+        "username_as_alias": True,
+        "request_timeout": 30,
+    }
+    if params["schema"] == "ad":
+        config.update({
+            "userattr": "sAMAccountName",
+            "userfilter": "(&(objectClass=user)(objectCategory=person)({{.UserAttr}}={{.Username}}))",
+            "groupfilter": "(&(objectClass=group)(member={{.UserDN}}))",
+            "groupattr": "sAMAccountName",
+        })
+    else:
+        config.update({
+            "userattr": "uid",
+            "userfilter": "(&(objectClass=posixAccount)({{.UserAttr}}={{.Username}}))",
+            "groupfilter": "(&(objectClass=posixGroup)(memberUid={{.Username}}))",
+            "groupattr": "cn",
+        })
+    return config
+
+
+def directory_login_requests(params, admin_group, bindpass, container=True):
+    """Return the OpenBao API requests that set up directory login.
+
+    Every request is idempotent, and none contacts the LDAP server: they
+    are safe for self-initialization, where a failure would leave OpenBao
+    initialized without any way to log in.
+    """
+    return [
+        {
+            "name": "ns8-admin-policy",
+            "operation": "update",
+            "path": f"sys/policies/acl/{ADMIN_POLICY_NAME}",
+            "data": {"policy": ADMIN_POLICY},
+        },
+        {
+            "name": "ns8-ldap-mount",
+            "operation": "update",
+            "path": "sys/auth/ldap",
+            "data": {
+                "type": "ldap",
+                "description": "NethServer 8 user domain login",
+            },
+        },
+        {
+            "name": "ns8-ldap-config",
+            "operation": "update",
+            "path": "auth/ldap/config",
+            "data": ldap_auth_config(params, bindpass, container=container),
+        },
+        {
+            "name": "ns8-ldap-admin-group",
+            "operation": "update",
+            "path": "auth/ldap/groups/" + admin_group,
+            "data": {"policies": [ADMIN_POLICY_NAME]},
+        },
+    ]
+
+
+def render_initialize(params, admin_group):
+    """Return the JSON text of the self-initialization configuration."""
+    bindpass = {
+        "eval_source": "env",
+        "eval_type": "string",
+        "env_var": LDAP_BIND_PASSWORD_VAR,
+        "require_present": True,
+    }
+    requests = []
+    for req in directory_login_requests(params, admin_group, bindpass):
+        body = {"operation": req["operation"], "path": req["path"], "data": req["data"]}
+        requests.append({req["name"]: body})
+    # A ready-to-use key/value store; not essential, so it may fail
+    requests.append({"ns8-kv-mount": {
+        "operation": "update",
+        "path": "sys/mounts/secret",
+        "data": {"type": "kv", "description": "Key/value secrets", "options": {"version": "2"}},
+        "allow_failure": True,
+    }})
+    return json.dumps({"initialize": [{"ns8-directory-login": {"request": requests}}]}, indent=2) + "\n"
+
+
+def auto_initialize_wanted(env):
+    return (
+        env["OPENBAO_UNSEAL_MODE"] == "auto"
+        and is_true(env["OPENBAO_AUTO_INITIALIZE"])
+        and bool(env["OPENBAO_USER_DOMAIN"])
+        and bool(env["OPENBAO_LDAP_ADMIN_GROUP"])
+    )
+
+
+def render_config(env):
+    """Return a dict with the generated files and their change signatures.
+
+    - restart_signature covers the settings that OpenBao cannot reload with
+      SIGHUP. log_level and declarative audit devices are reloadable.
+    - init_hash covers the self-initialization requests: they matter only
+      while OpenBao is not initialized.
     """
     host = env.get("TRAEFIK_HOST", "")
     api_addr = f"https://{host}" if host else "http://127.0.0.1:8200"
@@ -196,14 +363,35 @@ def render_config(env):
         reloadable.append("  }")
         reloadable.append("}")
 
+    # Self-initialization is generated only when every input is available:
+    # a failure after OpenBao initializes itself would lock everybody out.
+    init_text = ""
+    init_env = []
+    if auto_initialize_wanted(env):
+        params = discover_ldap(env["OPENBAO_USER_DOMAIN"])
+        if params:
+            init_text = render_initialize(params, env["OPENBAO_LDAP_ADMIN_GROUP"])
+            init_env.append(f"{LDAP_BIND_PASSWORD_VAR}={params['bind_password']}")
+        else:
+            log("Self-initialization skipped: the user domain is not available", "<4>")
+
     config_text = (
         "# Generated by ns8-openbao: manual changes are overwritten.\n"
         f"# restart-signature: {signature}\n\n"
         + static_text + "\n"
         + "\n".join(reloadable) + "\n"
     )
-    container_env_text = "\n".join(container_env) + ("\n" if container_env else "")
-    return config_text, container_env_text, signature
+    container_env_text = "".join(line + "\n" for line in container_env + init_env)
+    return {
+        "config_text": config_text,
+        "container_env_text": container_env_text,
+        "init_text": init_text,
+        "restart_signature": hashlib.sha256(
+            (static_text + "".join(line + "\n" for line in container_env)).encode()).hexdigest(),
+        "config_hash": hashlib.sha256(config_text.encode()).hexdigest(),
+        "init_hash": hashlib.sha256(
+            (init_text + "".join(init_env)).encode()).hexdigest(),
+    }
 
 
 def write_config():
@@ -213,23 +401,24 @@ def write_config():
     compared with read_applied() and saved with mark_applied().
     """
     env = read_environment()
-    config_text, container_env_text, signature = render_config(env)
+    rendered = render_config(env)
 
     os.makedirs(CONFIG_DIR, mode=0o755, exist_ok=True)
     os.chmod(CONFIG_DIR, 0o755)
-    # The container env file holds the seal key: owner-only permissions.
-    _write_file(CONTAINER_ENV_FILE, container_env_text, 0o600)
+    # The container env file holds the seal key and, until OpenBao is
+    # initialized, the LDAP bind password: owner-only permissions.
+    _write_file(CONTAINER_ENV_FILE, rendered["container_env_text"], 0o600)
     # The OpenBao process runs as an unprivileged user inside the container
-    # and must be able to read the configuration file. It holds no secrets.
-    # The whole directory is mounted, so an atomic replace is visible to a
-    # running container on reload.
-    _write_file(CONFIG_FILE, config_text, 0o644)
+    # and must be able to read the configuration files. They hold no
+    # secrets. The whole directory is mounted, so an atomic replace is
+    # visible to a running container on reload.
+    _write_file(CONFIG_FILE, rendered["config_text"], 0o644)
+    if rendered["init_text"]:
+        _write_file(INIT_FILE, rendered["init_text"], 0o644)
+    elif os.path.exists(INIT_FILE):
+        os.unlink(INIT_FILE)
 
-    return {
-        "restart_signature": signature,
-        "config_hash": hashlib.sha256(
-            (config_text + container_env_text).encode()).hexdigest(),
-    }
+    return {key: rendered[key] for key in ("restart_signature", "config_hash", "init_hash")}
 
 
 def read_applied():
@@ -245,14 +434,69 @@ def mark_applied(record):
     _write_file(APPLIED_FILE, json.dumps(record) + "\n", 0o644)
 
 
-def required_change(record):
-    """Return "none", "reload" or "restart" to make a running server load record."""
+def required_change(record, initialized=True):
+    """Return "none", "reload" or "restart" to make a running server load record.
+
+    initialized tells whether the running server is initialized: changed
+    self-initialization requests need a restart only if it is not.
+    """
     applied = read_applied()
     if not applied or applied.get("restart_signature") != record["restart_signature"]:
+        return "restart"
+    if not initialized and applied.get("init_hash") != record["init_hash"]:
         return "restart"
     if applied.get("config_hash") != record["config_hash"]:
         return "reload"
     return "none"
+
+
+def notify_recipients(env):
+    return [r for r in env.get("OPENBAO_NOTIFY_RECIPIENTS", "").split(",") if r]
+
+
+def send_notification(env, subject, body, recipients=None):
+    """Send an email with the core ns8-sendmail command.
+
+    ns8-sendmail reads the cluster SMTP smarthost settings when it runs, so
+    smarthost changes apply without any module action. Return (ok, error).
+    """
+    if recipients is None:
+        recipients = notify_recipients(env)
+    if not recipients:
+        return False, "no recipients"
+    module_id = os.environ.get("MODULE_ID", "openbao")
+    host = env.get("TRAEFIK_HOST", "")
+    footer = f"\n\n--\nOpenBao instance {module_id}"
+    if host:
+        footer += f" - https://{host}/ui/"
+    footer += "\nSent by NethServer 8. Recipients are set in the application Settings page.\n"
+    try:
+        proc = subprocess.run(
+            ["ns8-sendmail", "-s", f"[OpenBao {module_id}] {subject}", *recipients],
+            input=body + footer, text=True, capture_output=True, timeout=60, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as ex:
+        return False, str(ex)
+    if proc.returncode != 0:
+        return False, (proc.stderr or proc.stdout).strip()
+    return True, ""
+
+
+def server_condition(env):
+    """Return the OpenBao condition used by notifications and metrics.
+
+    One of "unconfigured", "down", "uninitialized", "sealed", "ok".
+    """
+    if not env.get("TRAEFIK_HOST"):
+        return "unconfigured", None
+    status = get_seal_status(timeout=5) if service_is_active() else None
+    if status is None:
+        return "down", None
+    if not status.get("initialized"):
+        return "uninitialized", status
+    if status.get("sealed"):
+        return "sealed", status
+    return "ok", status
 
 
 def _opener():
@@ -261,12 +505,29 @@ def _opener():
     return urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
+def api_request(path, method="GET", data=None, token=None, timeout=10):
+    """Call the OpenBao API on the local listener. Return the decoded JSON.
+
+    Raises urllib.error.HTTPError on API errors.
+    """
+    url = f"http://127.0.0.1:{os.environ['TCP_PORT']}/v1/" + \
+        urllib.parse.quote(path.lstrip("/"), safe="/")
+    headers = {"Accept": "application/json"}
+    body = None
+    if data is not None:
+        body = json.dumps(data).encode()
+        headers["Content-Type"] = "application/json"
+    if token:
+        headers["X-Vault-Token"] = token
+    req = urllib.request.Request(url, data=body, headers=headers, method=method)
+    with _opener().open(req, timeout=timeout) as resp:
+        payload = resp.read()
+    return json.loads(payload) if payload else {}
+
+
 def api_get(path, timeout=5):
     """GET an unauthenticated OpenBao API path. Return the decoded JSON."""
-    url = f"http://127.0.0.1:{os.environ['TCP_PORT']}/v1/{path.lstrip('/')}"
-    req = urllib.request.Request(url, headers={"Accept": "application/json"})
-    with _opener().open(req, timeout=timeout) as resp:
-        return json.load(resp)
+    return api_request(path, timeout=timeout)
 
 
 def get_seal_status(timeout=5):

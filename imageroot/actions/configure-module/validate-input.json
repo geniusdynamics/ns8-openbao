@@ -10,7 +10,13 @@
             "lets_encrypt": true,
             "log_level": "info",
             "audit_log": true,
-            "unseal_mode": "manual"
+            "unseal_mode": "manual",
+            "user_domain": "ad.example.org",
+            "ldap_admin_group": "Domain Admins",
+            "auto_initialize": false,
+            "notify_recipients": [
+                "security@example.org"
+            ]
         },
         {
             "host": "vault.example.org"
@@ -43,7 +49,13 @@
             "type": "string",
             "title": "Server log level",
             "description": "OpenBao server log level. Defaults to the current value, initially 'info'",
-            "enum": ["trace", "debug", "info", "warn", "error"]
+            "enum": [
+                "trace",
+                "debug",
+                "info",
+                "warn",
+                "error"
+            ]
         },
         "audit_log": {
             "type": "boolean",
@@ -54,7 +66,37 @@
             "type": "string",
             "title": "Unseal mode",
             "description": "'manual': Shamir unseal keys must be provided after every restart. 'auto': a static key stored on the node unseals OpenBao automatically. It can be changed only before OpenBao is initialized. Defaults to the current value, initially 'manual'",
-            "enum": ["manual", "auto"]
+            "enum": [
+                "manual",
+                "auto"
+            ]
+        },
+        "user_domain": {
+            "type": "string",
+            "title": "User domain",
+            "description": "NethServer 8 user domain (LDAP or Active Directory) used for OpenBao directory login. Empty string disables it. Defaults to the current value"
+        },
+        "ldap_admin_group": {
+            "type": "string",
+            "title": "Administrators group",
+            "description": "Group of user_domain whose members get full administrative access to OpenBao. Required when user_domain is set"
+        },
+        "auto_initialize": {
+            "type": "boolean",
+            "title": "Automatic initialization",
+            "description": "Let OpenBao initialize itself with directory login already configured: no root token or recovery keys are generated. Requires unseal_mode 'auto', user_domain and ldap_admin_group. It has no effect once OpenBao is initialized"
+        },
+        "notify_recipients": {
+            "type": "array",
+            "title": "Notification recipients",
+            "description": "Email addresses notified when OpenBao is down or sealed. The cluster SMTP smarthost is used. Empty list disables the notifications",
+            "maxItems": 20,
+            "uniqueItems": true,
+            "items": {
+                "type": "string",
+                "format": "email",
+                "pattern": "^[^@\\s,]+@[^@\\s,]+$"
+            }
         }
     }
 }

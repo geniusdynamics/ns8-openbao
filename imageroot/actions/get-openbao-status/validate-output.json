@@ -15,7 +15,8 @@
             "shares": 5,
             "progress": 0,
             "unseal_mode": "manual",
-            "ui_url": "https://vault.example.org/ui/"
+            "ui_url": "https://vault.example.org/ui/",
+            "user_domain": "ad.example.org"
         }
     ],
     "type": "object",
@@ -30,19 +31,60 @@
         "shares",
         "progress",
         "unseal_mode",
+        "user_domain",
         "ui_url"
     ],
     "properties": {
-        "service_active": {"type": "boolean", "description": "The openbao.service unit is active"},
-        "reachable": {"type": "boolean", "description": "The OpenBao API answered"},
-        "initialized": {"type": "boolean"},
-        "sealed": {"type": "boolean"},
-        "seal_type": {"type": "string", "description": "'shamir' or 'static'; empty if unknown"},
-        "version": {"type": "string"},
-        "threshold": {"type": "integer", "minimum": 0, "description": "Number of key shares required to unseal"},
-        "shares": {"type": "integer", "minimum": 0, "description": "Total number of key shares"},
-        "progress": {"type": "integer", "minimum": 0, "description": "Key shares provided so far for the current unseal"},
-        "unseal_mode": {"type": "string", "enum": ["manual", "auto"]},
-        "ui_url": {"type": "string", "description": "OpenBao web UI URL; empty if the host name is not configured"}
+        "service_active": {
+            "type": "boolean",
+            "description": "The openbao.service unit is active"
+        },
+        "reachable": {
+            "type": "boolean",
+            "description": "The OpenBao API answered"
+        },
+        "initialized": {
+            "type": "boolean"
+        },
+        "sealed": {
+            "type": "boolean"
+        },
+        "seal_type": {
+            "type": "string",
+            "description": "'shamir' or 'static'; empty if unknown"
+        },
+        "version": {
+            "type": "string"
+        },
+        "threshold": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Number of key shares required to unseal"
+        },
+        "shares": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Total number of key shares"
+        },
+        "progress": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Key shares provided so far for the current unseal"
+        },
+        "unseal_mode": {
+            "type": "string",
+            "enum": [
+                "manual",
+                "auto"
+            ]
+        },
+        "ui_url": {
+            "type": "string",
+            "description": "OpenBao web UI URL; empty if the host name is not configured"
+        },
+        "user_domain": {
+            "type": "string",
+            "description": "User domain used for directory login; empty if disabled"
+        }
     }
 }

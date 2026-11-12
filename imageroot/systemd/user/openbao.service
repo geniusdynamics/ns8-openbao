@@ -6,7 +6,8 @@
 #
 # OpenBao server with Raft integrated storage. The API and web UI are
 # published on the host loopback interface only: Traefik exposes them on
-# the configured host name with TLS.
+# the configured host name with TLS. The container reaches the node
+# ldapproxy for directory login at 10.0.2.2 (host loopback).
 #
 [Unit]
 Description=OpenBao secrets manager
@@ -27,6 +28,7 @@ ExecStart=/usr/bin/podman run \
     --replace --name=%N \
     --cap-drop=all \
     --security-opt=no-new-privileges \
+    --network=slirp4netns:allow_host_loopback=true \
     --publish=127.0.0.1:${TCP_PORT}:8200 \
     --volume=openbao-data:/openbao/file:Z \
     --volume=%E/state/openbao-config:/openbao/config:ro,Z \

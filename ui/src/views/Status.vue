@@ -117,6 +117,27 @@
           class="min-height-card"
         />
       </cv-column>
+      <cv-column :md="4" :max="4">
+        <NsInfoCard
+          light
+          :title="openbao.user_domain || $t('status.directory_login_disabled')"
+          :description="$t('status.directory_login')"
+          :icon="Group32Icon"
+          :loading="loading.getOpenbaoStatus"
+          class="min-height-card"
+        >
+          <template slot="content">
+            <NsButton
+              kind="ghost"
+              :icon="Settings20"
+              :disabled="loading.getOpenbaoStatus"
+              @click="goToAppPage(instanceName, 'settings')"
+            >
+              {{ $t("status.configure") }}
+            </NsButton>
+          </template>
+        </NsInfoCard>
+      </cv-column>
     </cv-row>
     <cv-row>
       <cv-column :md="4" :max="4">
@@ -344,6 +365,7 @@ import {
   PageTitleService,
 } from "@nethserver/ns8-ui-lib";
 import Password32 from "@carbon/icons-vue/es/password/32";
+import Group32 from "@carbon/icons-vue/es/group/32";
 
 export default {
   name: "Status",
@@ -364,6 +386,7 @@ export default {
       },
       urlCheckInterval: null,
       Password32Icon: Password32,
+      Group32Icon: Group32,
       isRedirectChecked: false,
       redirectTimeout: 0,
       status: {
@@ -382,6 +405,7 @@ export default {
         shares: 0,
         progress: 0,
         unseal_mode: "manual",
+        user_domain: "",
         ui_url: "",
       },
       isOpenbaoStatusLoaded: false,

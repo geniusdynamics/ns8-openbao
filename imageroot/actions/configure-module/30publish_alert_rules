@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# Publish the OpenBao alert rules to the NS8 metrics module. Prometheus
+# evaluates them on the metrics printed by bin/export-metrics; Alertmanager
+# sends the alerts to the cluster alert recipients through the SMTP
+# smarthost. Rules are scoped to this instance automatically, and removed
+# with it. They are published again by restore-module, which calls
+# configure-module.
+#
+
+import json
+import os
+import sys
+import agent
+
+RULES = {
+    "openbao-down": {
+        "alert": "OpenbaoDown",
+        "expr": "openbao_up == 0",
+        "for": "10m",
+        "labels": {"severity": "critical"},
+        "annotations": {
+            "summary_en": "OpenBao is down",
+            "summary_it": "OpenBao non è attivo",
+            "description_en": "The OpenBao API does not answer: applications cannot read their secrets",
+            "description_it": "Le API di OpenBao non rispondono: le applicazioni non possono leggere i segreti",
+        },
+    },
+    "openbao-sealed": {
+        "alert": "OpenbaoSealed",
+        "expr": "openbao_sealed == 1 and openbao_initialized == 1",
+        "for": "10m",
+        "labels": {"severity": "critical"},
+        "annotations": {
+            "summary_en": "OpenBao is sealed",
+            "summary_it": "OpenBao è sigillato",
+            "description_en": "OpenBao is sealed: provide the unseal keys from its web UI",
+            "description_it": "OpenBao è sigillato: inserire le chiavi di sblocco dalla sua interfaccia web",
+        },
+    },
+    "openbao-uninitialized": {
+        "alert": "OpenbaoNotInitialized",
+        "expr": "openbao_initialized == 0",
+        "for": "24h",
+        "labels": {"severity": "warning"},
+        "annotations": {
+            "summary_en": "OpenBao is not initialized",
+            "summary_it": "OpenBao non è inizializzato",
+            "description_en": "OpenBao has been running for a day without being initialized",
+            "description_it": "OpenBao è in esecuzione da un giorno senza essere stato inizializzato",
+        },
+    },
+}
+
+module_id = os.environ["MODULE_ID"]
+try:
+    rdb = agent.redis_connect(privileged=True)
+    key = f"module/{module_id}/metrics_alert_rules"
+    pipe = rdb.pipeline()
+    pipe.delete(key)
+    # JSON is valid YAML
+    pipe.hset(key, mapping={name: json.dumps(rule) for name, rule in RULES.items()})
+    pipe.execute()
+    rdb.publish(f"module/{module_id}/event/metrics-alert-rules-changed", "{}")
+except Exception as ex:
+    # Alerts are useful but not essential: never block the configuration
+    print(agent.SD_WARNING + f"Cannot publish the alert rules: {ex}", file=sys.stderr)

@@ -10,7 +10,21 @@
             "lets_encrypt": true,
             "log_level": "info",
             "audit_log": false,
-            "unseal_mode": "manual"
+            "unseal_mode": "manual",
+            "user_domain": "ad.example.org",
+            "ldap_admin_group": "Domain Admins",
+            "auto_initialize": false,
+            "notify_recipients": [
+                "security@example.org"
+            ],
+            "user_domains": [
+                {
+                    "name": "ad.example.org",
+                    "schema": "ad",
+                    "location": "internal"
+                }
+            ],
+            "smarthost_enabled": true
         }
     ],
     "type": "object",
@@ -20,7 +34,13 @@
         "lets_encrypt",
         "log_level",
         "audit_log",
-        "unseal_mode"
+        "unseal_mode",
+        "user_domain",
+        "ldap_admin_group",
+        "auto_initialize",
+        "notify_recipients",
+        "user_domains",
+        "smarthost_enabled"
     ],
     "properties": {
         "host": {
@@ -37,7 +57,13 @@
         },
         "log_level": {
             "type": "string",
-            "enum": ["trace", "debug", "info", "warn", "error"]
+            "enum": [
+                "trace",
+                "debug",
+                "info",
+                "warn",
+                "error"
+            ]
         },
         "audit_log": {
             "type": "boolean",
@@ -45,7 +71,58 @@
         },
         "unseal_mode": {
             "type": "string",
-            "enum": ["manual", "auto"]
+            "enum": [
+                "manual",
+                "auto"
+            ]
+        },
+        "user_domain": {
+            "type": "string",
+            "description": "User domain used for directory login; empty if disabled"
+        },
+        "ldap_admin_group": {
+            "type": "string",
+            "description": "Directory group of OpenBao administrators"
+        },
+        "auto_initialize": {
+            "type": "boolean",
+            "description": "OpenBao initializes itself with directory login when it starts uninitialized"
+        },
+        "notify_recipients": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "description": "Email addresses notified when OpenBao is down or sealed"
+        },
+        "user_domains": {
+            "type": "array",
+            "description": "User domains of the cluster",
+            "items": {
+                "type": "object",
+                "required": [
+                    "name",
+                    "schema",
+                    "location"
+                ],
+                "properties": {
+                    "name": {
+                        "type": "string"
+                    },
+                    "schema": {
+                        "type": "string",
+                        "description": "'ad' or 'rfc2307'"
+                    },
+                    "location": {
+                        "type": "string",
+                        "description": "'internal' or 'external'"
+                    }
+                }
+            }
+        },
+        "smarthost_enabled": {
+            "type": "boolean",
+            "description": "The cluster SMTP smarthost is enabled, so email notifications can be sent"
         }
     }
 }

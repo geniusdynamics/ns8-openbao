@@ -14,30 +14,64 @@ import openbao
 agent.set_weight(os.path.basename(__file__), 0)  # Validation step, no task progress
 
 request = json.load(sys.stdin)
+env = openbao.read_environment()
 errors = []
 
+
+def fail(field, value, error):
+    errors.append({"field": field, "parameter": field, "value": value, "error": error})
+
+
 host = request["host"]
-if host != os.environ.get("TRAEFIK_HOST", "") and agent.http_route_in_use(domain=host):
-    errors.append({
-        "field": "host",
-        "parameter": "host",
-        "value": host,
-        "error": "domain_already_used_in_traefik",
-    })
+if host != env.get("TRAEFIK_HOST", "") and agent.http_route_in_use(domain=host):
+    fail("host", host, "domain_already_used_in_traefik")
+
+# Lazily evaluated: it may query the running server or the data volume
+_storage_state = None
+
+
+def storage_state():
+    global _storage_state
+    if _storage_state is None:
+        _storage_state = openbao.storage_state()
+    return _storage_state
+
 
 # The seal type is written in the OpenBao storage at initialization time.
 # Switching it afterwards requires a manual seal migration.
-current_mode = os.environ.get("OPENBAO_UNSEAL_MODE", openbao.DEFAULTS["OPENBAO_UNSEAL_MODE"])
+current_mode = env["OPENBAO_UNSEAL_MODE"]
 requested_mode = request.get("unseal_mode", current_mode)
-if requested_mode != current_mode:
-    state = openbao.storage_state()
-    if state != "uninitialized":
-        errors.append({
-            "field": "unseal_mode",
-            "parameter": "unseal_mode",
-            "value": requested_mode,
-            "error": "unseal_mode_locked" if state == "initialized" else "unseal_mode_cannot_verify",
-        })
+if requested_mode != current_mode and storage_state() != "uninitialized":
+    fail("unseal_mode", requested_mode,
+         "unseal_mode_locked" if storage_state() == "initialized" else "unseal_mode_cannot_verify")
+
+# Directory login: the domain must exist and the administrators group must
+# be a visible group of that domain. A wrong group name would leave a
+# self-initialized OpenBao without administrators.
+user_domain = request.get("user_domain", env["OPENBAO_USER_DOMAIN"])
+admin_group = request.get("ldap_admin_group", env["OPENBAO_LDAP_ADMIN_GROUP"]).strip()
+if user_domain:
+    params = openbao.discover_ldap(user_domain)
+    if params is None:
+        fail("user_domain", user_domain, "user_domain_not_found")
+    elif not admin_group:
+        fail("ldap_admin_group", admin_group, "ldap_admin_group_required")
+    else:
+        try:
+            from agent.ldapclient import Ldapclient
+            from agent.ldapclient.exceptions import LdapclientEntryNotFound
+            Ldapclient.factory(**params).get_group(admin_group)
+        except LdapclientEntryNotFound:
+            fail("ldap_admin_group", admin_group, "ldap_admin_group_not_found")
+        except Exception as ex:
+            print(agent.SD_ERR + f"LDAP query failed: {ex}", file=sys.stderr)
+            fail("ldap_admin_group", admin_group, "ldap_admin_group_cannot_verify")
+
+if request.get("auto_initialize", False):
+    if requested_mode != "auto":
+        fail("auto_initialize", True, "auto_initialize_requires_auto_unseal")
+    elif not user_domain:
+        fail("auto_initialize", True, "auto_initialize_requires_user_domain")
 
 if errors:
     agent.set_status("validation-failed")

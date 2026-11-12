@@ -20,6 +20,9 @@ for evar in [
         "OPENBAO_LOG_LEVEL",
         "OPENBAO_AUDIT_LOG",
         "OPENBAO_UNSEAL_MODE",
+        "OPENBAO_USER_DOMAIN",
+        "OPENBAO_LDAP_ADMIN_GROUP",
+        "OPENBAO_NOTIFY_RECIPIENTS",
     ]:
     value = original_environment.get(evar, openbao.DEFAULTS.get(evar))
     if value is not None:

@@ -64,6 +64,34 @@ Check if get-openbao-status reports the server state
     Should Be Equal    ${status.initialized}    ${False}
     Should Be Equal    ${status.ui_url}    https://${HOST}/ui/
 
+Check if metrics are exported
+    ${output}  ${rc} =    Execute Command    runagent -m ${module_id} export-metrics
+    ...    return_rc=True
+    Should Be Equal As Integers    ${rc}  0
+    Should Contain    ${output}    openbao_up 1
+    Should Contain    ${output}    openbao_initialized 0
+
+Check if the alert rules are published
+    FOR    ${rule}    IN    openbao-down    openbao-sealed    openbao-uninitialized
+        ${output}  ${rc} =    Execute Command    redis-cli HEXISTS module/${module_id}/metrics_alert_rules ${rule}
+        ...    return_rc=True
+        Should Be Equal As Integers    ${rc}  0
+        Should Be Equal As Integers    ${output}  1
+    END
+
+Check if notification recipients are validated
+    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host": "${HOST}", "notify_recipients": ["not-an-address"]}'
+    ...    return_rc=True  return_stdout=False
+    Should Not Be Equal As Integers    ${rc}  0
+
+Check if notifications enable the check timer
+    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host": "${HOST}", "http2https": false, "notify_recipients": ["security@example.org"]}'
+    ...    return_rc=True  return_stdout=False
+    Should Be Equal As Integers    ${rc}  0
+    ${rc} =    Execute Command    runagent -m ${module_id} systemctl --user -q is-active openbao-notify.timer
+    ...    return_rc=True  return_stdout=False
+    Should Be Equal As Integers    ${rc}  0
+
 Check if openbao can be initialized and unsealed
     &{init} =    Bao Request    ${HOST}    PUT    sys/init    {"secret_shares": 1, "secret_threshold": 1}
     Set Suite Variable    ${root_token}    ${init.root_token}

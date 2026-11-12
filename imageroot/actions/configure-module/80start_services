@@ -15,20 +15,32 @@ import sys
 import agent
 import openbao
 
-record = openbao.write_config()
-change = openbao.required_change(record)
 
-agent.run_helper("systemctl", "--user", "enable", "openbao.service").check_returncode()
+def systemctl(*args):
+    agent.run_helper("systemctl", "--user", *args).check_returncode()
+
+
+record = openbao.write_config()
+status = openbao.get_seal_status()
+change = openbao.required_change(record, initialized=bool(status and status.get("initialized")))
+
+systemctl("enable", "openbao.service")
 
 if not openbao.service_is_active():
     print("Starting OpenBao", file=sys.stderr)
-    agent.run_helper("systemctl", "--user", "start", "openbao.service").check_returncode()
+    systemctl("start", "openbao.service")
 elif change == "restart":
     print("Restarting OpenBao to apply the new configuration", file=sys.stderr)
-    agent.run_helper("systemctl", "--user", "restart", "openbao.service").check_returncode()
+    systemctl("restart", "openbao.service")
 elif change == "reload":
     print("Reloading the OpenBao configuration", file=sys.stderr)
-    agent.run_helper("systemctl", "--user", "reload", "openbao.service").check_returncode()
+    systemctl("reload", "openbao.service")
     openbao.mark_applied(record)
 else:
     print("OpenBao configuration is unchanged", file=sys.stderr)
+
+# Email notifications through the cluster smarthost
+if openbao.notify_recipients(openbao.read_environment()):
+    systemctl("enable", "--now", "openbao-notify.timer")
+else:
+    systemctl("disable", "--now", "openbao-notify.timer")

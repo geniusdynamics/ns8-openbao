@@ -13,6 +13,10 @@ The module runs OpenBao as a rootless container with:
   optional Let's Encrypt certificate
 - **manual (Shamir) or automatic (static key) unseal**
 - optional **audit log** to the systemd journal
+- **directory login** with a NethServer user domain (OpenLDAP or Active
+  Directory), optionally configured automatically at initialization
+- **email notifications** through the cluster SMTP smarthost, and
+  **alerts** in the NethServer metrics and alert system
 - backup, restore and clone support
 
 ## Table of contents
@@ -21,6 +25,8 @@ The module runs OpenBao as a rootless container with:
 - [Configure](#configure)
 - [Initialize and unseal](#initialize-and-unseal)
 - [Unseal modes](#unseal-modes)
+- [Directory login (LDAP / Active Directory)](#directory-login-ldap--active-directory)
+- [Notifications and alerts](#notifications-and-alerts)
 - [Get the configuration and state](#get-the-configuration-and-state)
 - [Backup and restore](#backup-and-restore)
 - [Update](#update)
@@ -57,7 +63,11 @@ api-cli run configure-module --agent module/openbao1 --data - <<EOF
   "lets_encrypt": true,
   "unseal_mode": "manual",
   "log_level": "info",
-  "audit_log": true
+  "audit_log": true,
+  "user_domain": "ad.example.org",
+  "ldap_admin_group": "Domain Admins",
+  "auto_initialize": false,
+  "notify_recipients": ["security@example.org"]
 }
 EOF
 ```
@@ -71,6 +81,16 @@ Parameters:
   Default `manual`. It can be changed only before OpenBao is initialized
 - `log_level`: `trace`, `debug`, `info`, `warn` or `error`. Default `info`
 - `audit_log`: send the OpenBao audit log to the systemd journal. Default `false`
+- `user_domain`: NethServer user domain for directory login; `""` disables
+  it. See [Directory login](#directory-login-ldap--active-directory)
+- `ldap_admin_group`: group of `user_domain` whose members get full access
+  to OpenBao. Required with `user_domain`; it must exist in the domain
+- `auto_initialize`: with `unseal_mode` `auto` and a `user_domain`, let
+  OpenBao initialize itself with directory login already configured
+- `notify_recipients`: email addresses notified when OpenBao is down or
+  sealed. `[]` disables them. See [Notifications](#notifications-and-alerts)
+
+Omitted optional parameters keep their current value.
 
 The command starts OpenBao and configures the Traefik route. Clients reach
 the API at `https://vault.example.org` (for example
@@ -124,6 +144,80 @@ which is not automated by the module.
 
 **Never delete or replace `state/openbao-seal.key`** of an instance using
 automatic unseal: without it the data cannot be decrypted.
+
+## Directory login (LDAP / Active Directory)
+
+Choose a user domain of the cluster (internal OpenLDAP or Samba Active
+Directory, or an external LDAP/AD domain) and an administrators group in
+*Settings*. The module binds the domain, so it appears in the cluster
+*Domains and users* page. OpenBao is then configured with:
+
+- the `ldap` auth method, connected to the node ldapproxy: it relays to
+  the domain servers with TLS and fails over between them. User and group
+  searches mirror the NethServer core: `sAMAccountName`/`member` for Active
+  Directory, `uid`/`posixGroup` `memberUid` for OpenLDAP
+- the `ns8-admin` policy, with full access, mapped to the administrators
+  group
+
+Users log in with their domain account:
+
+```bash
+bao login -method=ldap username=alice
+```
+
+or from the web UI, choosing the *LDAP* method. Create further policies
+and map other groups with `auth/ldap/groups/<group>`.
+
+How OpenBao is configured depends on its state:
+
+- **Automatic initialization** (`auto_initialize`, requires automatic
+  unseal and an uninitialized server): OpenBao initializes itself at the
+  next start with directory login, the `ns8-admin` policy and a `secret/`
+  key/value (v2) store. No root token and no recovery keys are created:
+  members of the administrators group log in at once. After the first
+  login, generate recovery keys and store them safely:
+
+  ```bash
+  bao operator rotate-keys -init -key-shares=5 -key-threshold=3 -target=recovery
+  ```
+
+  The module checks that the group exists before saving, because a wrong
+  group would leave OpenBao without administrators.
+
+- **Already initialized, or manual unseal**: the module cannot change
+  OpenBao without an administrator token, and tokens must never pass
+  through module actions. After saving the settings, run on the node:
+
+  ```bash
+  runagent -m openbao1 openbao-setup-ldap
+  ```
+
+  It prompts for an OpenBao token (or reads `BAO_TOKEN`), applies the same
+  configuration and forgets the token.
+
+OpenBao keeps its own copy of the LDAP connection settings. If the domain
+bind credentials or servers change, the module logs a warning, sends a
+notification and asks to run `openbao-setup-ldap` again.
+
+## Notifications and alerts
+
+OpenBao itself does not send email. The module adds two notification
+paths, both through the cluster SMTP smarthost (configured in the cluster
+*Settings*, SMTP smarthost page):
+
+- **Application recipients** (`notify_recipients`): every 5 minutes
+  `openbao-notify.timer` checks OpenBao and sends one email when it is
+  down or sealed for two checks in a row, and one when it recovers. A short
+  planned stop, like the backup copy with automatic unseal, does not
+  notify. Use *Send test email* in *Settings*, or the `send-test-email`
+  action, to verify delivery.
+- **Cluster alerts**: the module exports `openbao_up`, `openbao_initialized`,
+  `openbao_sealed`, `openbao_build_info` and `openbao_auto_unseal`
+  metrics (core 3.24 or later) and publishes alert rules to the NethServer
+  metrics module: `OpenbaoDown` and `OpenbaoSealed` (critical, after 10
+  minutes) and `OpenbaoNotInitialized` (warning, after 24 hours). They
+  appear in the cluster alert list and are mailed to the cluster alert
+  recipients.
 
 ## Get the configuration and state
 
