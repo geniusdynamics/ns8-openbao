@@ -1,0 +1,17 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# Return the plugin catalog of the Plugins page with the state of each
+# plugin. Read-only: nothing is downloaded.
+#
+
+import json
+import sys
+import openbao
+
+json.dump({"plugins": openbao.plugin_catalog_state()}, fp=sys.stdout)

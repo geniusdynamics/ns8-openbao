@@ -5,7 +5,7 @@
 
 // Helpers shared by the Settings page and the setup wizard. The component
 // must define the data fields savedConfig, userDomain, ldapAdminGroup,
-// domainGroups, notifyRecipients, testEmailResult, error.notify_recipients,
+// domainGroups, haJoin, notifyRecipients, testEmailResult, error.notify_recipients,
 // loading.listDomainGroups and loading.sendTestEmail, and use the
 // TaskService and UtilService mixins.
 
@@ -56,6 +56,29 @@ export default {
         });
       }
       return options;
+    },
+    // Other OpenBao instances with high availability enabled; a candidate
+    // needs its cluster network API, which new members join through
+    haCandidateOptions() {
+      const candidates =
+        (this.savedConfig && this.savedConfig.ha_candidates) || [];
+      return candidates
+        .filter((c) => c.api_url)
+        .map((c) => ({
+          name: c.module_id,
+          value: c.module_id,
+          label: this.$t("settings.ha_candidate_label", {
+            name: c.ui_name || c.module_id,
+            module: c.module_id,
+            node: c.node,
+            mode: this.$t("settings.unseal_mode_" + c.unseal_mode),
+          }),
+        }));
+    },
+    selectedHaCandidate() {
+      const candidates =
+        (this.savedConfig && this.savedConfig.ha_candidates) || [];
+      return candidates.find((c) => c.module_id === this.haJoin) || null;
     },
     recipientList() {
       return this.notifyRecipients

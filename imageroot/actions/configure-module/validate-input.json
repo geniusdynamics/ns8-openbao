@@ -209,6 +209,22 @@
             "minimum": 0,
             "maximum": 90,
             "description": "Number of daily Raft snapshots kept on the node (requires the module token). 0 disables them"
+        },
+        "ha_role": {
+            "type": "string",
+            "title": "High availability role",
+            "description": "Experimental. 'standalone' (default): a single-node OpenBao. 'primary': accept other OpenBao instances as members of its Raft cluster; it publishes the Raft cluster port and the cluster network API on the node VPN address and requires manual or Transit unseal. 'member': join the Raft cluster of the instance named by ha_join; allowed only before this instance is initialized, and it takes the seal of that cluster.",
+            "enum": [
+                "standalone",
+                "primary",
+                "member"
+            ]
+        },
+        "ha_join": {
+            "type": "string",
+            "title": "Instance to join",
+            "description": "Module ID of an OpenBao instance that accepts members (see ha_candidates of get-configuration). Required with ha_role 'member'.",
+            "maxLength": 64
         }
     }
 }

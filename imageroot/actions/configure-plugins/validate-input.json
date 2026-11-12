@@ -1,0 +1,48 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "configure-plugins input",
+    "$id": "http://schema.nethserver.org/openbao/configure-plugins-input.json",
+    "description": "Choose the optional OpenBao plugins. Enabled plugins are downloaded (images pinned by digest), installed and declared; OpenBao restarts if the set changes (with manual unseal it must be unsealed again). Disabled plugins are removed with their images. Enabling a plugin in OpenBao (bao auth enable / bao secrets enable) needs an administrator token and is not done by the module.",
+    "examples": [
+        {
+            "plugins": [
+                "auth-github",
+                "secrets-aws"
+            ]
+        },
+        {
+            "plugins": []
+        }
+    ],
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+        "plugins"
+    ],
+    "properties": {
+        "plugins": {
+            "type": "array",
+            "uniqueItems": true,
+            "description": "Ids of the enabled optional plugins",
+            "items": {
+                "type": "string",
+                "enum": [
+                    "auth-aws",
+                    "auth-azure",
+                    "auth-gcp",
+                    "auth-github",
+                    "auth-kerberos",
+                    "auth-radius",
+                    "secrets-aws",
+                    "secrets-azure",
+                    "secrets-gcp",
+                    "secrets-gcpkms",
+                    "secrets-consul",
+                    "secrets-nomad",
+                    "secrets-ldap",
+                    "database-mongodb"
+                ]
+            }
+        }
+    }
+}

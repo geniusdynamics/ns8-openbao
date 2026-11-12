@@ -476,6 +476,112 @@
                 >{{ snapshotRestoreCommand }}</NsCodeSnippet
               >
             </div>
+            <!-- high availability -->
+            <h4 class="section-title">{{ $t("settings.section_ha") }}</h4>
+            <p class="section-description">
+              {{ $t("settings.ha_description") }}
+            </p>
+            <cv-radio-group
+              :legend="$t('settings.ha_role')"
+              vertical
+              class="mg-bottom"
+              ref="ha_role"
+            >
+              <cv-radio-button
+                :label="$t('settings.ha_role_standalone')"
+                value="standalone"
+                v-model="haRole"
+                :disabled="isFormDisabled || isHaRoleLocked"
+              />
+              <p class="radio-description">
+                {{ $t("settings.ha_role_standalone_description") }}
+              </p>
+              <cv-radio-button
+                :label="$t('settings.ha_role_primary')"
+                value="primary"
+                v-model="haRole"
+                :disabled="
+                  isFormDisabled || isHaRoleLocked || unsealMode === 'auto'
+                "
+              />
+              <p class="radio-description">
+                {{ $t("settings.ha_role_primary_description") }}
+              </p>
+              <cv-radio-button
+                :label="$t('settings.ha_role_member')"
+                value="member"
+                v-model="haRole"
+                :disabled="isFormDisabled || isHaRoleLocked || !canJoin"
+              />
+              <p class="radio-description">
+                {{ $t("settings.ha_role_member_description") }}
+              </p>
+            </cv-radio-group>
+            <div v-if="haRole === 'member'" class="maxwidth mg-bottom">
+              <NsComboBox
+                v-model="haJoin"
+                :options="haCandidateOptions"
+                :title="$t('settings.ha_join')"
+                :label="$t('settings.ha_join_placeholder')"
+                :invalid-message="error.ha_join"
+                :disabled="isFormDisabled || isHaRoleLocked"
+                :auto-filter="true"
+                :auto-highlight="true"
+                class="mg-bottom"
+                ref="ha_join"
+              />
+              <NsInlineNotification
+                v-if="!haCandidateOptions.length"
+                kind="info"
+                :title="$t('settings.ha_no_candidates')"
+                :description="$t('settings.ha_no_candidates_description')"
+                :showCloseButton="false"
+              />
+              <NsInlineNotification
+                v-if="selectedHaCandidate"
+                kind="info"
+                :title="$t('settings.ha_join_seal_title')"
+                :description="
+                  $t('settings.ha_join_seal_' + selectedHaCandidate.unseal_mode)
+                "
+                :showCloseButton="false"
+              />
+              <NsCodeSnippet
+                v-if="
+                  selectedHaCandidate &&
+                  selectedHaCandidate.unseal_mode === 'transit' &&
+                  savedConfig &&
+                  !savedConfig.transit_token_present
+                "
+                :copyTooltip="$t('settings.copy_to_clipboard')"
+                :copy-feedback="$t('settings.copied_to_clipboard')"
+                :feedback-aria-label="$t('settings.copied_to_clipboard')"
+                hideExpandButton
+                >{{ transitTokenCommand }}</NsCodeSnippet
+              >
+            </div>
+            <NsInlineNotification
+              v-if="haRole === 'primary'"
+              kind="info"
+              :title="$t('settings.ha_primary_notice_title')"
+              :description="$t('settings.ha_primary_notice_description')"
+              :showCloseButton="false"
+              class="maxwidth"
+            />
+            <NsInlineNotification
+              v-if="isHaRoleLocked"
+              kind="info"
+              :title="$t('settings.ha_member_locked')"
+              :showCloseButton="false"
+              class="maxwidth"
+            />
+            <NsInlineNotification
+              v-if="error.ha_role"
+              kind="error"
+              :title="error.ha_role"
+              :showCloseButton="false"
+              class="maxwidth"
+            />
             <!-- notifications -->
             <h4 class="section-title">
               {{ $t("settings.section_notifications") }}
@@ -647,6 +753,8 @@ export default {
       transitMount: "transit",
       transitKey: "",
       isTransitTlsSkipVerify: false,
+      haRole: "standalone",
+      haJoin: "",
       isAdvancedOpen: false,
       savedConfig: null,
       openbaoStatus: null,
@@ -677,6 +785,8 @@ export default {
         vpn_api: "",
         public_access: "",
         snapshot_keep: "",
+        ha_role: "",
+        ha_join: "",
       },
     };
   },
@@ -729,6 +839,22 @@ export default {
     },
     transitTokenCommand() {
       return `runagent -m ${this.instanceName} openbao-transit-token`;
+    },
+    isHaRoleLocked() {
+      // A member that joined its cluster leaves it only with its module
+      return !!(
+        this.savedConfig &&
+        this.savedConfig.ha_role === "member" &&
+        this.openbaoStatus &&
+        this.openbaoStatus.initialized
+      );
+    },
+    canJoin() {
+      // Joining replaces the storage: only before initialization
+      return (
+        (this.savedConfig && this.savedConfig.ha_role === "member") ||
+        !(this.openbaoStatus && this.openbaoStatus.initialized)
+      );
     },
     canAutoInitialize() {
       // self-initialization needs an auto-unseal mechanism and an
@@ -826,6 +952,10 @@ export default {
         }
       });
       this.isAutoInitializeEnabled = config.auto_initialize;
+      this.haRole = config.ha_role;
+      this.$nextTick(() => {
+        this.haJoin = config.ha_join;
+      });
       this.notifyRecipients = config.notify_recipients.join(", ");
       this.ipAllowlistText = config.ip_allowlist.join("\n");
       this.isVpnApiEnabled = config.vpn_api;
@@ -956,6 +1086,13 @@ export default {
       if (!this.isPublicAccessEnabled && !this.isVpnApiEnabled) {
         isValidationOk = false;
       }
+      if (this.haRole === "member" && !this.haJoin) {
+        this.error.ha_join = this.$t("settings.ha_join_required");
+        if (isValidationOk) {
+          this.focusElement("ha_join");
+        }
+        isValidationOk = false;
+      }
       const keep = Number(this.snapshotKeep);
       if (!Number.isInteger(keep) || keep < 0 || keep > 90) {
         this.error.snapshot_keep = this.$t("settings.snapshot_keep_invalid");
@@ -1053,6 +1190,7 @@ export default {
             user_domain: this.userDomain,
             ldap_admin_group: this.userDomain ? this.ldapAdminGroup : "",
             auto_initialize:
+              this.haRole !== "member" &&
               !!this.userDomain &&
               this.canAutoInitialize &&
               this.isAutoInitializeEnabled,
@@ -1069,6 +1207,8 @@ export default {
             transit_mount: this.transitMount,
             transit_key: this.transitKey,
             transit_tls_skip_verify: this.isTransitTlsSkipVerify,
+            ha_role: this.haRole,
+            ha_join: this.haRole === "member" ? this.haJoin : "",
           },
           extra: {
             title: this.$t("settings.configure_instance", {

@@ -50,12 +50,37 @@
         <template v-else-if="step === 'welcome'">
           <h4 class="mg-bottom">{{ $t("wizard.welcome_title") }}</h4>
           <p class="mg-bottom">{{ $t("wizard.welcome_description") }}</p>
+          <cv-radio-group
+            v-if="!isInitialized"
+            :legend="$t('wizard.setup_mode')"
+            vertical
+            class="mg-bottom"
+          >
+            <cv-radio-button
+              :label="$t('wizard.setup_mode_new')"
+              value="new"
+              v-model="setupMode"
+            />
+            <ul class="choice-details">
+              <li>{{ $t("wizard.setup_mode_new_description") }}</li>
+            </ul>
+            <cv-radio-button
+              :label="$t('wizard.setup_mode_join')"
+              value="join"
+              v-model="setupMode"
+              :disabled="!haCandidateOptions.length"
+            />
+            <ul class="choice-details">
+              <li>{{ $t("wizard.setup_mode_join_description") }}</li>
+              <li v-if="!haCandidateOptions.length">
+                {{ $t("settings.ha_no_candidates_description") }}
+              </li>
+            </ul>
+          </cv-radio-group>
           <ol class="welcome-list mg-bottom">
-            <li>{{ $t("wizard.step_web") }}</li>
-            <li>{{ $t("wizard.step_unseal") }}</li>
-            <li>{{ $t("wizard.step_directory") }}</li>
-            <li>{{ $t("wizard.step_notifications") }}</li>
-            <li>{{ $t("wizard.step_review") }}</li>
+            <li v-for="s in numberedSteps" :key="s">
+              {{ $t("wizard.step_" + s) }}
+            </li>
           </ol>
           <NsInlineNotification
             kind="info"
@@ -99,6 +124,61 @@
             <template slot="text-left">{{ $t("settings.disabled") }}</template>
             <template slot="text-right">{{ $t("settings.enabled") }}</template>
           </NsToggle>
+        </template>
+
+        <!-- join an existing OpenBao (high availability) -->
+        <template v-else-if="step === 'join'">
+          <p class="mg-bottom">{{ $t("wizard.join_description") }}</p>
+          <NsComboBox
+            v-model="haJoin"
+            :options="haCandidateOptions"
+            :title="$t('settings.ha_join')"
+            :label="$t('settings.ha_join_placeholder')"
+            :invalid-message="error.ha_join"
+            :auto-filter="true"
+            :auto-highlight="true"
+            class="mg-bottom"
+            ref="ha_join"
+          />
+          <NsInlineNotification
+            v-if="selectedHaCandidate"
+            kind="info"
+            :title="$t('settings.ha_join_seal_title')"
+            :description="
+              $t('settings.ha_join_seal_' + selectedHaCandidate.unseal_mode)
+            "
+            :showCloseButton="false"
+          />
+          <template
+            v-if="
+              selectedHaCandidate &&
+              selectedHaCandidate.unseal_mode === 'transit' &&
+              savedConfig &&
+              !savedConfig.transit_token_present
+            "
+          >
+            <p class="mg-bottom">{{ $t("wizard.join_transit_token") }}</p>
+            <NsCodeSnippet
+              :copyTooltip="$t('settings.copy_to_clipboard')"
+              :copy-feedback="$t('settings.copied_to_clipboard')"
+              :feedback-aria-label="$t('settings.copied_to_clipboard')"
+              hideExpandButton
+              class="mg-bottom"
+              >{{ transitTokenCommand }}</NsCodeSnippet
+            >
+          </template>
+          <NsInlineNotification
+            kind="warning"
+            :title="$t('wizard.join_quorum_title')"
+            :description="$t('wizard.join_quorum_description')"
+            :showCloseButton="false"
+          />
+          <NsInlineNotification
+            v-if="error.ha_role"
+            kind="error"
+            :title="error.ha_role"
+            :showCloseButton="false"
+          />
         </template>
 
         <!-- unseal mode -->
@@ -327,8 +407,28 @@
         <template v-else-if="step === 'done'">
           <h4 class="mg-bottom">{{ $t("wizard.done_title") }}</h4>
 
+          <!-- joined an existing OpenBao -->
+          <template v-if="outcome === 'joined'">
+            <p class="mg-bottom">
+              {{
+                selectedHaCandidate &&
+                selectedHaCandidate.unseal_mode === "transit"
+                  ? $t("wizard.done_joined_transit")
+                  : $t("wizard.done_joined_manual")
+              }}
+            </p>
+            <NsButton
+              kind="primary"
+              :icon="Launch20"
+              class="mg-bottom"
+              type="button"
+              @click="openUrl(uiUrl)"
+              >{{ $t("status.open_openbao") }}</NsButton
+            >
+          </template>
+
           <!-- C: self-initialization with directory login -->
-          <template v-if="outcome === 'self_initialized'">
+          <template v-else-if="outcome === 'self_initialized'">
             <p class="mg-bottom">{{ $t("wizard.done_self_init") }}</p>
             <NsButton
               kind="primary"
@@ -352,6 +452,29 @@
           <!-- A, B: the administrator initializes OpenBao -->
           <template v-else-if="outcome === 'initialize'">
             <p class="mg-bottom">{{ $t("wizard.done_initialize") }}</p>
+            <h6 class="mg-bottom-small">{{ $t("wizard.init_cli_title") }}</h6>
+            <p class="mg-bottom-small">
+              {{
+                unsealMode === "manual"
+                  ? $t("wizard.init_cli_description_manual")
+                  : $t("wizard.init_cli_description_auto")
+              }}
+            </p>
+            <NsCodeSnippet
+              :copyTooltip="$t('settings.copy_to_clipboard')"
+              :copy-feedback="$t('settings.copied_to_clipboard')"
+              :feedback-aria-label="$t('settings.copied_to_clipboard')"
+              hideExpandButton
+              class="mg-bottom"
+              >{{ initCommand }}</NsCodeSnippet
+            >
+            <h6 class="mg-bottom-small">{{ $t("wizard.init_ui_title") }}</h6>
+            <NsInlineNotification
+              kind="warning"
+              :title="$t('wizard.init_ui_warning_title')"
+              :description="$t('wizard.init_ui_warning_description')"
+              :showCloseButton="false"
+            />
             <ol class="next-steps mg-bottom">
               <li>{{ $t("wizard.init_step_open") }}</li>
               <li>
@@ -432,15 +555,18 @@ import { mapState } from "vuex";
 import { UtilService, TaskService, IconService } from "@nethserver/ns8-ui-lib";
 import OpenbaoConfig from "@/mixins/openbaoConfig";
 
-const STEPS = [
-  "welcome",
-  "web",
-  "unseal",
-  "directory",
-  "notifications",
-  "review",
-  "done",
-];
+const STEPS = {
+  new: [
+    "welcome",
+    "web",
+    "unseal",
+    "directory",
+    "notifications",
+    "review",
+    "done",
+  ],
+  join: ["welcome", "web", "join", "notifications", "review", "done"],
+};
 
 export default {
   name: "SetupWizard",
@@ -451,6 +577,8 @@ export default {
   data() {
     return {
       step: "welcome",
+      setupMode: "new",
+      haJoin: "",
       savedConfig: null,
       openbaoStatus: null,
       host: "",
@@ -483,13 +611,24 @@ export default {
         ldap_admin_group: "",
         auto_initialize: "",
         notify_recipients: "",
+        ha_role: "",
+        ha_join: "",
       },
     };
   },
   computed: {
     ...mapState(["instanceName", "core"]),
+    steps() {
+      return STEPS[this.setupMode] || STEPS.new;
+    },
     numberedSteps() {
-      return STEPS.filter((s) => !["welcome", "done"].includes(s));
+      return this.steps.filter((s) => !["welcome", "done"].includes(s));
+    },
+    initCommand() {
+      return `runagent -m ${this.instanceName} openbao-init`;
+    },
+    transitTokenCommand() {
+      return `runagent -m ${this.instanceName} openbao-transit-token`;
     },
     stepNumber() {
       return this.numberedSteps.indexOf(this.step) + 1;
@@ -552,6 +691,31 @@ export default {
     reviewItems() {
       const yes = this.$t("settings.enabled");
       const no = this.$t("settings.disabled");
+      if (this.setupMode === "join") {
+        return [
+          { label: this.$t("settings.host"), value: this.host },
+          {
+            label: this.$t("settings.ha_join"),
+            value: this.selectedHaCandidate
+              ? `${this.selectedHaCandidate.module_id} (${this.selectedHaCandidate.node})`
+              : this.haJoin,
+          },
+          {
+            label: this.$t("settings.unseal_mode"),
+            value: this.selectedHaCandidate
+              ? this.$t(
+                  "settings.unseal_mode_" + this.selectedHaCandidate.unseal_mode
+                )
+              : "",
+          },
+          {
+            label: this.$t("settings.notify_recipients"),
+            value: this.recipientList.length
+              ? this.recipientList.join(", ")
+              : no,
+          },
+        ];
+      }
       const items = [
         { label: this.$t("settings.host"), value: this.host },
         {
@@ -611,6 +775,7 @@ export default {
   methods: {
     open() {
       this.step = "welcome";
+      this.setupMode = "new";
       this.outcome = "";
       this.testEmailResult = null;
       this.clearErrors(this);
@@ -682,6 +847,12 @@ export default {
             : true;
           this.notifyRecipients = config.notify_recipients.join(", ");
           this.starterKits = [...config.starter_kits];
+          if (config.ha_role === "member") {
+            this.setupMode = "join";
+          }
+          this.$nextTick(() => {
+            this.haJoin = config.ha_join;
+          });
           this.loading.getConfiguration = false;
         },
         () => {
@@ -735,6 +906,12 @@ export default {
           this.focusElement("ldap_admin_group");
           return false;
         }
+      } else if (this.step === "join") {
+        if (!this.haJoin) {
+          this.error.ha_join = this.$t("settings.ha_join_required");
+          this.focusElement("ha_join");
+          return false;
+        }
       } else if (this.step === "notifications") {
         const invalid = this.invalidRecipient();
         if (invalid) {
@@ -763,12 +940,12 @@ export default {
         this.configureModule();
         return;
       }
-      this.step = STEPS[STEPS.indexOf(this.step) + 1];
+      this.step = this.steps[this.steps.indexOf(this.step) + 1];
     },
     previousStep() {
-      const index = STEPS.indexOf(this.step);
+      const index = this.steps.indexOf(this.step);
       if (index > 0) {
-        this.step = STEPS[index - 1];
+        this.step = this.steps[index - 1];
       }
     },
     async configureModule() {
@@ -777,11 +954,14 @@ export default {
       const action = "configure-module";
       const eventId = this.getUuid();
       const directory = this.isDirectoryEnabled && !!this.userDomain;
-      const selfInitialize = this.willSelfInitialize;
+      const join = this.setupMode === "join";
+      const selfInitialize = !join && this.willSelfInitialize;
 
       this.core.$root.$once(`${action}-completed-${eventId}`, () => {
         this.loading.configureModule = false;
-        if (selfInitialize) {
+        if (join) {
+          this.outcome = "joined";
+        } else if (selfInitialize) {
           this.outcome = "self_initialized";
         } else if (!this.isInitialized) {
           this.outcome = "initialize";
@@ -802,17 +982,29 @@ export default {
       const res = await to(
         this.createModuleTaskForApp(this.instanceName, {
           action,
-          data: {
-            host: this.host,
-            lets_encrypt: this.isLetsEncryptEnabled,
-            http2https: this.isHttpToHttpsEnabled,
-            unseal_mode: this.unsealMode,
-            user_domain: directory ? this.userDomain : "",
-            ldap_admin_group: directory ? this.ldapAdminGroup : "",
-            auto_initialize: selfInitialize,
-            notify_recipients: this.recipientList,
-            starter_kits: this.starterKits,
-          },
+          data: join
+            ? {
+                // The member takes the seal and the directory login of
+                // the cluster it joins
+                host: this.host,
+                lets_encrypt: this.isLetsEncryptEnabled,
+                http2https: this.isHttpToHttpsEnabled,
+                ha_role: "member",
+                ha_join: this.haJoin,
+                auto_initialize: false,
+                notify_recipients: this.recipientList,
+              }
+            : {
+                host: this.host,
+                lets_encrypt: this.isLetsEncryptEnabled,
+                http2https: this.isHttpToHttpsEnabled,
+                unseal_mode: this.unsealMode,
+                user_domain: directory ? this.userDomain : "",
+                ldap_admin_group: directory ? this.ldapAdminGroup : "",
+                auto_initialize: selfInitialize,
+                notify_recipients: this.recipientList,
+                starter_kits: this.starterKits,
+              },
           extra: {
             title: this.$t("settings.configure_instance", {
               instance: this.instanceName,
@@ -838,6 +1030,8 @@ export default {
         user_domain: "directory",
         ldap_admin_group: "directory",
         auto_initialize: "directory",
+        ha_role: "join",
+        ha_join: "join",
       };
       let targetStep = "";
       for (const validationError of validationErrors) {
@@ -911,5 +1105,9 @@ export default {
 .review-label {
   font-weight: 600;
   width: 40%;
+}
+
+.mg-bottom-small {
+  margin-bottom: $spacing-03;
 }
 </style>

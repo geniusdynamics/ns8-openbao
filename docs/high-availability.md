@@ -1,72 +1,203 @@
-# High availability: design notes
+# High availability
 
-Status: **not implemented**. This document records the design and why it
-is not shipped yet. Today each OpenBao instance is a single-node Raft
-cluster.
+Part of the [ns8-openbao documentation](../README.md#documentation).
 
-## Why it is not shipped yet
+## Using high availability
 
-Joining instances into one Raft cluster changes how storage, unseal,
-backup and restore behave, and a mistake in Raft membership loses data.
-It needs testing on a real multi-node NethServer cluster (node loss,
-leader change, rejoin, restore) before it can be offered. The CI runs on a
-single VM.
+**Experimental.** Several OpenBao instances, normally on different nodes,
+can form one Raft cluster: one instance is active, the others are
+standbys that forward requests to it and take over if it stops. A single
+instance works exactly as before: nothing changes until a role is chosen.
+The design decisions and limits are below.
 
-## Constraints of the current design
+1. On the existing instance, *Settings*, *High availability*: choose
+   **Accept members** (`"ha_role": "primary"`). It needs manual or Transit
+   unseal. OpenBao restarts (unseal it again with manual unseal); if it is
+   initialized, its Raft address moves from loopback to the node VPN
+   address, keeping a copy of the previous Raft files.
+2. Install a new instance on another node and, in its setup wizard,
+   choose **Join an existing OpenBao** and the instance from the list
+   (`"ha_role": "member", "ha_join": "openbao1"`). The list comes from the
+   NS8 service discovery (`openbao-cluster` service providers).
+3. Manual unseal: unseal the new instance with the unseal keys of the
+   cluster; it completes the join when unsealed. Transit unseal: store the
+   Transit token on the new node first (`openbao-transit-token`); the
+   member unseals itself.
+4. Repeat for a third instance: a Raft cluster works while a majority of
+   its members runs, so 2 instances stop if either one stops.
 
-- **Fixed Raft node ID `ns8-openbao`** and cluster address
-  `https://127.0.0.1:8201`. They are stored in the Raft data; the fixed
-  values let restore and clone to another instance name work. HA needs a
-  node ID that is unique within the Raft cluster (only joining members
-  need a new one, see below) and a cluster address reachable from the
-  other nodes.
-- **Cluster port is local**: 8201 is not published. Members must reach
-  each other's cluster port (mutual TLS, managed by OpenBao) on the node
-  VPN addresses.
-- **Seal**: every member must use the same seal. Static auto-unseal would
-  need the key file copied to each member over a secure channel (never
-  through Redis); Transit is the natural choice for HA.
-- **Backup/restore**: Raft snapshots of the leader are the backup; the
-  volume copy of a follower is not a valid restore source.
+```bash
+api-cli run configure-module --agent module/openbao1 --data '{"host": "vault1.example.org", "ha_role": "primary"}'
+api-cli run configure-module --agent module/openbao2 --data '{"host": "vault2.example.org", "ha_role": "member", "ha_join": "openbao1"}'
+```
 
-## Proposed design
+The *Status* page shows the role, the active node and, with the module
+token, the Raft members.
 
-1. A member instance is installed with a `ha_leader` setting naming an
-   existing instance (`module_id`). It discovers the leader's cluster
-   network API through the `openbao` service provider record.
-2. Node IDs: every single-node instance, including all 1.x installs,
-   keeps the fixed `ns8-openbao`, and it never changes. Only an instance
-   installed as a member of an existing one gets its own ID
-   (`node_id = MODULE_ID`, unique in the NethServer cluster). Raft needs
-   IDs to be unique only within one Raft cluster, so the first instance
-   needs no node ID migration, and single-node installs, restore and
-   clone keep working as today.
-3. The cluster port is published on a fourth TCP port, bound to the node
-   VPN address; `cluster_addr` becomes `https://<vpn address>:<port>`.
-   This, not the node ID, is the risky step: the first instance's own
-   Raft entry still holds `127.0.0.1:8201`. Raft identifies the local
-   server by ID, so a single node keeps electing itself, but members
-   could not reach it. Before the first member joins, rewrite the entry
-   with OpenBao's documented outage-recovery procedure: stop the
-   instance, write `raft/peers.json` with
-   `[{"id": "ns8-openbao", "address": "<vpn address>:<port>", "non_voter": false}]`,
-   and start it. Take a Raft snapshot first.
-4. Members start with `retry_join { leader_api_addr = "<leader cluster
-   network API>" }`, and are unsealed with the same seal (Transit
-   recommended).
-5. Traefik routes on each node point to the local member; standby members
-   forward requests to the active one (request forwarding is on by
-   default), so any member's host name works.
-6. Backups run `module-dump-state` only on the active member (snapshot
-   through the module token); restore rebuilds a single-node cluster and
-   members rejoin.
-7. The Status page shows the Raft peers (`sys/storage/raft/configuration`,
-   readable with the module token) and the leader.
+**Removing a member**: first remove its peer from the cluster with an
+administrator token, then remove its application. Removing a member
+application without removing its peer leaves the cluster counting a
+missing voter:
 
-## Open questions
+```bash
+bao operator raft remove-peer openbao2
+```
 
-- Removing a member (`bao operator raft remove-peer`) when its module is
-  removed: the departing instance needs a token to call the leader.
-- Quorum: 2 members tolerate no failure; the UI should recommend 3.
-- Upgrade order: OpenBao requires followers to be updated before the
-  leader.
+**Back to standalone**: a primary returns standalone only when it is the
+last Raft member. A member that joined cannot leave by configuration
+(its data belongs to the cluster): remove its peer and its application.
+
+**Backups and restore**: take backups of the primary, which has the
+module token for consistent snapshots. A restored or cloned instance
+always comes back standalone: its Raft configuration is rewritten as a
+single node before its first start.
+
+**Updates**: update the standby instances first and the active one last,
+as OpenBao recommends.
+
+## Design decisions
+
+Status: **experimental**. Single-node tests run in CI, including a real
+join of two instances on the same node through the node VPN address
+(`tests/50_openbao_ha.robot`). Multi-node behaviour (node loss, leader
+change, rejoin) is verified manually on real clusters.
+
+### Goals
+
+- **Nothing changes for a single instance.** Every 1.x install, and every
+  new install that does not choose a role, is a standalone single-node
+  Raft cluster exactly as before: same node ID, same loopback cluster
+  address, no extra published port.
+- **Opt-in, per instance.** High availability is a role chosen in
+  *Settings* or in the setup wizard of a new instance.
+- **No secret through NS8 actions or Redis.** Redis keeps task payloads
+  for 8 hours, readable by all modules. Joining needs no token; the seal
+  key or token never leaves its node.
+
+### Roles
+
+| Role | Raft node ID | Cluster address | Published |
+|---|---|---|---|
+| `standalone` (default) | `ns8-openbao` | `127.0.0.1:8201` | nothing new |
+| `primary` (accepts members) | `ns8-openbao` | `<node VPN IP>:<4th TCP port>` | cluster port and cluster network API on the VPN address |
+| `member` | its module ID | `<node VPN IP>:<4th TCP port>` | cluster port on the VPN address |
+
+#### Node IDs
+
+The Raft node ID is stored in the Raft data and never changes.
+
+- Standalone and primary instances keep the fixed `ns8-openbao`. The first
+  instance of a cluster therefore needs no node ID migration, and restore
+  and clone to another instance name keep working.
+- Only an instance that joins gets its own ID: `OPENBAO_RAFT_NODE_ID` is
+  set to its module ID once, at join time. Raft needs IDs to be unique only
+  within one Raft cluster, and module IDs are unique in the NethServer
+  cluster.
+- Restore and clone copy `OPENBAO_RAFT_NODE_ID`, because it must match the
+  data.
+
+#### Cluster address: the one risky step
+
+A standalone instance's own Raft entry holds `127.0.0.1:8201`. Raft
+identifies the local server by ID, so a single node keeps electing itself,
+but members could not reach it. When an initialized standalone instance
+becomes a primary, the module uses OpenBao's documented outage recovery:
+
+1. `configure-module` sets `OPENBAO_RAFT_RECOVER`.
+2. In `ExecStartPre`, with the server stopped, `openbao-write-config`
+   copies the Raft files to `raft.bak-<timestamp>` in the data volume and
+   writes `raft/peers.json` with the single entry
+   `{"id": "ns8-openbao", "address": "<VPN IP>:<port>", "non_voter": false}`.
+3. OpenBao applies and deletes `peers.json` at start.
+
+No member can have joined yet, because the cluster port was not
+published, so rewriting the configuration as a single node loses nothing.
+The same mechanism moves a primary back to loopback when it returns
+standalone. That is allowed only when the module token shows it is the
+last Raft member. It also detaches a restored or cloned HA instance from
+its old cluster.
+
+### Discovery: NS8 service providers
+
+As other modules do (for example Webtop discovering Mail), an HA instance
+publishes a service provider record:
+
+```
+module/<id>/srv/tcp/openbao-cluster
+  host, port         cluster listener on the node VPN address
+  api_url            cluster network API, used by joining instances
+  ha_cluster         module ID of the primary
+  ha_role, raft_node_id
+  unseal_mode, transit_address, transit_mount, transit_key,
+  transit_tls_skip_verify   (no token)
+```
+
+and the event `openbao-cluster-changed`.
+
+- `get-configuration` returns the other records as `ha_candidates`: the
+  Settings page and the wizard list them.
+- Consumers use `agent.list_service_providers(rdb, "openbao-cluster", "tcp")`.
+
+### Joining
+
+- A member is configured with `ha_role: member` and `ha_join: <module ID>`.
+- `configure-module` stores the `api_url` of every instance of that
+  cluster in `OPENBAO_HA_JOIN_ADDRS`. They are rendered as `retry_join`
+  blocks of the Raft storage, used only until the instance has joined.
+- Raft join is unauthenticated: the joining node answers a challenge
+  encrypted with the cluster keyring, so it must use the same seal:
+  - **Manual (Shamir)**: the member is unsealed with the unseal keys of
+    the cluster, which completes the join.
+  - **Transit**: the member takes the cluster's Transit settings from the
+    discovery record. Its own Transit token is stored on its node with
+    `openbao-transit-token`, and it unseals itself.
+  - **Automatic (static key)**: not supported. Members would need a copy
+    of the key file, and the only built-in channel between nodes is Redis.
+- Joining is allowed only on an uninitialized instance: the join replaces
+  its storage. A member never initializes itself.
+
+### Ports
+
+- The fourth module TCP port is the cluster listener; `tcp-ports-demand`
+  is 4.
+- Instances installed by earlier releases get the port from `node:portsadm`
+  when they first choose a role (`OPENBAO_CLUSTER_PORT`); NS8 updates the
+  allowed demand when the module is updated.
+- The listener inside the container is `0.0.0.0:8201`, published only on
+  the node VPN address, which the cluster VPN protects. Raft and request
+  forwarding use mutual TLS managed by OpenBao.
+
+### Lifecycle rules
+
+| Change | Allowed when |
+|---|---|
+| standalone → primary | manual or Transit unseal; storage state known |
+| primary → standalone | no other Raft member (read with the module token) |
+| standalone → member | the instance is not initialized |
+| member → standalone | the member never joined (not initialized) |
+| joined member leaves | not by configuration: remove its peer (`bao operator raft remove-peer <module id>`, administrator token), then remove its application |
+
+### Backups, restore, clone
+
+- Backups of the primary contain a consistent Raft snapshot (module
+  token). Members have no module token and back up their data volume.
+- Restore and clone never restore a role: the instance comes back
+  standalone, and `OPENBAO_RAFT_RECOVER` rewrites the Raft configuration as
+  a single node with the original node ID. Clone also drops the ports
+  allocated to the original instance.
+
+### Known limits
+
+- **Quorum**: 2 members tolerate no failure; use 3.
+- **Removing a member** needs an administrator token on the cluster, which
+  the module never holds: it cannot remove the peer by itself.
+- **Node VPN address change** of an HA node: the Raft data keeps the old
+  address. The module logs a warning; the peer must be updated in the
+  cluster (remove and rejoin the member, or use `peers.json` recovery on
+  every node).
+- **Upgrade order**: update the standby instances first, the active one
+  last.
+- **Traefik**: each instance has its own host name. A standby forwards
+  requests to the active node, so any member's host name works. A shared
+  host name in front of all members (DNS or an external load balancer) is
+  outside the module.

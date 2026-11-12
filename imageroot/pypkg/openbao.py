@@ -19,6 +19,7 @@ import os
 import secrets
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -63,7 +64,24 @@ DEFAULTS = {
     "OPENBAO_PUBLIC_ACCESS": "True",
     "OPENBAO_SNAPSHOT_KEEP": "0",
     "OPENBAO_SEAL_MIGRATION_FROM": "",
+    "OPENBAO_HA_ROLE": "standalone",
+    "OPENBAO_HA_CLUSTER": "",
+    "OPENBAO_HA_JOIN": "",
+    "OPENBAO_HA_JOIN_ADDRS": "",
+    "OPENBAO_RAFT_NODE_ID": "",
+    "OPENBAO_RAFT_RECOVER": "False",
+    "OPENBAO_PLUGINS": "",
 }
+
+# High availability (experimental): "standalone" is a single-node Raft
+# cluster, as in every 1.x release. A "primary" accepts members: its
+# cluster port is published on the node VPN address. A "member" joined the
+# Raft cluster of another instance.
+HA_ROLES = ["standalone", "primary", "member"]
+# NS8 service provider record of the instances that accept members:
+#   agent.list_service_providers(rdb, "openbao-cluster", "tcp")
+CLUSTER_SERVICE = "openbao-cluster"
+CLUSTER_CONTAINER_PORT = 8201
 
 SNAPSHOT_DIR = "snapshots"  # scheduled local snapshots, not in backups
 
@@ -149,12 +167,225 @@ BREAKGLASS_TOKEN_TTL = "768h"
 # PLUGIN_DIR by install_plugins() and declared in the server configuration.
 PLUGINS = [
     {
-        "name": "ldap",
+        "id": "auth-ldap",
         "type": "auth",
+        "name": "ldap",
         "image_var": "OPENBAO_PLUGIN_AUTH_LDAP_IMAGE",
         "command": "openbao-plugin-auth-ldap",
     },
 ]
+# Optional plugins of the openbao-plugins project (Plugins page). None is
+# downloaded until it is enabled (OPENBAO_PLUGINS): then the module pulls
+# the image pinned by digest, copies and verifies the binary, and declares
+# it. They are NOT in org.nethserver.images, which every instance pulls.
+# The OpenBao process never writes PLUGIN_DIR: it is mounted read-only.
+# "name" is the name registered in OpenBao: auth methods and secrets
+# engines are enabled with it, a database plugin is the plugin_name of a
+# database connection.
+PLUGIN_CATALOG = [
+    {
+        "id": "auth-aws",
+        "type": "auth",
+        "name": "aws",
+        "image": "ghcr.io/openbao/openbao-plugin-auth-aws:v0.1.2@sha256:bd17aee90584851f427cbed1d4effa91ea53ce713c9b9d8568620328d843d919",
+        "command": "openbao-plugin-auth-aws",
+    },
+    {
+        "id": "auth-azure",
+        "type": "auth",
+        "name": "azure",
+        "image": "ghcr.io/openbao/openbao-plugin-auth-azure:v0.23.1@sha256:0dbd2186d3ad2e7b270ec939de95caed0bf376f8baa44636572bb5f304508033",
+        "command": "openbao-plugin-auth-azure",
+    },
+    {
+        "id": "auth-gcp",
+        "type": "auth",
+        "name": "gcp",
+        "image": "ghcr.io/openbao/openbao-plugin-auth-gcp:v0.22.1@sha256:098e03a560fe91d25617825a480144e9ba6d2ebd6e85e4b4a262b8121d3ed141",
+        "command": "openbao-plugin-auth-gcp",
+    },
+    {
+        "id": "auth-github",
+        "type": "auth",
+        "name": "github",
+        "image": "ghcr.io/openbao/openbao-plugin-auth-github:v0.0.2@sha256:386c8087ba7740ee1047e5c1cc1f4bb89389a39654be03ada24692cde4f99afd",
+        "command": "openbao-plugin-auth-github",
+    },
+    {
+        "id": "auth-kerberos",
+        "type": "auth",
+        "name": "kerberos",
+        "image": "ghcr.io/openbao/openbao-plugin-auth-kerberos:v0.1.0@sha256:7c3077e0281e8883fb669e41dfae869ed971869d11b8a115008a50aeef3311b9",
+        "command": "openbao-plugin-auth-kerberos",
+    },
+    {
+        "id": "auth-radius",
+        "type": "auth",
+        "name": "radius",
+        "image": "ghcr.io/openbao/openbao-plugin-auth-radius:v0.2.0@sha256:047657dd7458ee1b13d2a1b9ec9b55f214e818c027ee4fbecefed9278c94d707",
+        "command": "openbao-plugin-auth-radius",
+    },
+    {
+        "id": "secrets-aws",
+        "type": "secret",
+        "name": "aws",
+        "image": "ghcr.io/openbao/openbao-plugin-secrets-aws:v0.3.3@sha256:d930da29a004415c489c4d242a1985d211ca8b507887e35aa097719d95f6e574",
+        "command": "openbao-plugin-secrets-aws",
+    },
+    {
+        "id": "secrets-azure",
+        "type": "secret",
+        "name": "azure",
+        "image": "ghcr.io/openbao/openbao-plugin-secrets-azure:v0.23.1@sha256:f844e875e6b53fa44158501d46c8669f38e5c4340a2333ef1a68f7e8ebcf7f92",
+        "command": "openbao-plugin-secrets-azure",
+    },
+    {
+        "id": "secrets-gcp",
+        "type": "secret",
+        "name": "gcp",
+        "image": "ghcr.io/openbao/openbao-plugin-secrets-gcp:v0.23.2@sha256:df3bf223cddd11abd71e8f6da1504b907672871a748d35ead794b0dfd31674e1",
+        "command": "openbao-plugin-secrets-gcp",
+    },
+    {
+        "id": "secrets-gcpkms",
+        "type": "secret",
+        "name": "gcpkms",
+        "image": "ghcr.io/openbao/openbao-plugin-secrets-gcpkms:v0.21.1@sha256:7dc49dd1333a6962e00c417fc11340d44187d7907ea4a5a53d7233760ac3f1bf",
+        "command": "openbao-plugin-secrets-gcpkms",
+    },
+    {
+        "id": "secrets-consul",
+        "type": "secret",
+        "name": "consul",
+        "image": "ghcr.io/openbao/openbao-plugin-secrets-consul:v0.1.2@sha256:558945fd2740814a45a3014abe211bc32b309044fd32d58388b588db46933b31",
+        "command": "openbao-plugin-secrets-consul",
+    },
+    {
+        "id": "secrets-nomad",
+        "type": "secret",
+        "name": "nomad",
+        "image": "ghcr.io/openbao/openbao-plugin-secrets-nomad:v0.1.7@sha256:e6ba85c7f2c4d1035c397d7db0b5d9ea2907c7381479c0a3ab5f5bd0b6673446",
+        "command": "openbao-plugin-secrets-nomad",
+    },
+    {
+        "id": "secrets-ldap",
+        "type": "secret",
+        "name": "ldap",
+        "image": "ghcr.io/openbao/openbao-plugin-secrets-ldap:v0.1.1@sha256:1c9bca950ea399cded489820aff334321d086b9d456fe42801587873d0c0b5c4",
+        "command": "openbao-plugin-secrets-ldap",
+    },
+    {
+        "id": "database-mongodb",
+        "type": "database",
+        "name": "mongodb-database-plugin",
+        "image": "ghcr.io/openbao/openbao-plugin-database-mongodb:v0.0.2@sha256:ed76f5811116edc4790d14a926322ea8b6e265d9ce3a1b0dad0bf6af898685ab",
+        "command": "openbao-plugin-database-mongodb",
+    },
+]
+# First steps shown by the Plugins page and docs/plugins.md, run by an
+# administrator with the bao CLI. Placeholders in <angle brackets>.
+PLUGIN_DOCS_BASE = "https://github.com/openbao/openbao-plugins/tree/main/"
+PLUGIN_GUIDES = {
+    "auth-aws": ("auth/aws", [
+        "bao write auth/aws/config/client access_key=<access key> secret_key=<secret key>",
+        "bao write auth/aws/role/<role> auth_type=iam bound_iam_principal_arn=<IAM ARN> policies=ns8-secrets-ro",
+    ]),
+    "auth-azure": ("auth/azure", [
+        "bao write auth/azure/config tenant_id=<tenant ID> resource=https://management.azure.com/",
+        "bao write auth/azure/role/<role> bound_subscription_ids=<subscription ID> policies=ns8-secrets-ro",
+    ]),
+    "auth-gcp": ("auth/gcp", [
+        "bao write auth/gcp/config credentials=@<service-account>.json",
+        "bao write auth/gcp/role/<role> type=iam bound_service_accounts=<service account e-mail> policies=ns8-secrets-ro",
+    ]),
+    "auth-github": ("auth/github", [
+        "bao write auth/github/config organization=<organization>",
+        "bao write auth/github/map/teams/<team> value=ns8-secrets-rw",
+    ]),
+    "auth-kerberos": ("auth/kerberos", [
+        "bao write auth/kerberos/config keytab=@<keytab, base64> service_account=<service account>",
+        "bao write auth/kerberos/config/ldap url=ldaps://<directory server> userdn=<users DN> groupdn=<groups DN>",
+    ]),
+    "auth-radius": ("auth/radius", [
+        "bao write auth/radius/config host=<RADIUS server> secret=<shared secret>",
+        "bao write auth/radius/users/<user> policies=ns8-secrets-ro",
+    ]),
+    "secrets-aws": ("secrets/aws", [
+        "bao write aws/config/root access_key=<access key> secret_key=<secret key> region=<region>",
+        "bao write aws/roles/<role> credential_type=iam_user policy_arns=<policy ARN>",
+        "bao read aws/creds/<role>",
+    ]),
+    "secrets-azure": ("secrets/azure", [
+        "bao write azure/config subscription_id=<subscription ID> tenant_id=<tenant ID> client_id=<client ID> client_secret=<client secret>",
+        "bao write azure/roles/<role> azure_roles=@<roles>.json ttl=1h",
+    ]),
+    "secrets-gcp": ("secrets/gcp", [
+        "bao write gcp/config credentials=@<service-account>.json",
+        "bao write gcp/roleset/<roleset> project=<project> secret_type=access_token token_scopes=https://www.googleapis.com/auth/cloud-platform bindings=@<bindings>.hcl",
+    ]),
+    "secrets-gcpkms": ("secrets/gcpkms", [
+        "bao write gcpkms/config credentials=@<service-account>.json",
+        "bao write gcpkms/keys/<key> key_ring=projects/<project>/locations/<location>/keyRings/<key ring> rotation_period=72h",
+    ]),
+    "secrets-consul": ("secrets/consul", [
+        "bao write consul/config/access address=<Consul host>:8500 token=<management token>",
+        "bao write consul/roles/<role> policies=<Consul policy>",
+    ]),
+    "secrets-nomad": ("secrets/nomad", [
+        "bao write nomad/config/access address=http://<Nomad host>:4646 token=<management token>",
+        "bao write nomad/role/<role> policies=<Nomad policy>",
+    ]),
+    "secrets-ldap": ("secrets/ldap", [
+        "bao write ldap/config binddn=<bind DN> bindpass=<bind password> url=ldaps://<directory server>",
+        "bao write ldap/static-role/<role> dn=<account DN> username=<account> rotation_period=24h",
+    ]),
+    "database-mongodb": ("database/mongodb", [
+        "bao secrets enable database",
+        "bao write database/config/<connection> plugin_name=mongodb-database-plugin allowed_roles=<role> "
+        "connection_url=\"mongodb://{{username}}:{{password}}@<host>:27017/admin\" username=<admin user> password=<admin password>",
+        "bao write database/roles/<role> db_name=<connection> "
+        "creation_statements='{ \"db\": \"admin\", \"roles\": [{ \"role\": \"readWrite\", \"db\": \"<database>\" }] }' default_ttl=1h",
+    ]),
+}
+
+
+def plugin_enable_command(entry):
+    """Return the bao command that enables a catalog plugin."""
+    if entry["type"] == "auth":
+        return f"bao auth enable {entry['name']}"
+    if entry["type"] == "secret":
+        return f"bao secrets enable {entry['name']}"
+    return "bao secrets enable database"
+
+
+def plugin_catalog_state():
+    """Return the catalog with the state of each plugin, for the Plugins page."""
+    env = read_environment()
+    enabled = set(enabled_plugins(env))
+    installed = declared_plugins()
+    items = []
+    for entry in PLUGINS + PLUGIN_CATALOG:
+        bundled = "image_var" in entry
+        record = installed.get(entry["id"])
+        doc_path, setup = PLUGIN_GUIDES.get(entry["id"], (entry["id"].replace("-", "/", 1), []))
+        image = (env.get(entry["image_var"]) or os.environ.get(entry["image_var"], "")) \
+            if bundled else entry["image"]
+        items.append({
+            "id": entry["id"],
+            "type": entry["type"],
+            "name": entry["name"],
+            "bundled": bundled,
+            "enabled": bundled or entry["id"] in enabled,
+            "installed": bool(record),
+            "version": _image_version(image),
+            "installed_version": record["version"] if record else "",
+            "docs_url": PLUGIN_DOCS_BASE + doc_path,
+            "enable_command": plugin_enable_command(entry) if not bundled else "",
+            "setup_commands": setup,
+        })
+    return items
+
+
 PLUGIN_CONTAINER_DIR = "/openbao/plugins"
 # Podman translates this address to the node loopback interface, where
 # the NS8 ldapproxy listens (slirp4netns allow_host_loopback=true)
@@ -167,12 +398,18 @@ HOST_LOOPBACK_ADDR = "10.0.2.2"
 METRICS_CONTAINER_PORT = 8202
 METRICS_PATH = "/v1/sys/metrics"
 
-# The Raft node ID and cluster address must never change: they are stored
-# inside the Raft data. Do not derive them from MODULE_ID, otherwise a
-# restore or a clone to a different instance name would leave Raft without
-# a leader.
+# The Raft node ID is stored inside the Raft data and never changes. It is
+# not derived from MODULE_ID, otherwise a restore or a clone to a different
+# instance name would leave Raft without a leader. Every standalone or
+# primary instance uses RAFT_NODE_ID; only a member that joins another
+# instance gets its own ID (OPENBAO_RAFT_NODE_ID, set once at join time and
+# kept by restore and clone). The cluster address of a standalone instance
+# stays on loopback; an HA instance uses its node VPN address, and the
+# address stored in the Raft data is rewritten with peers.json (see
+# write_raft_recovery).
 RAFT_NODE_ID = "ns8-openbao"
 CLUSTER_ADDR = "https://127.0.0.1:8201"
+LOCAL_RAFT_ADDRESS = "127.0.0.1:8201"
 
 # OpenBao listens on plain HTTP inside the container; the port is published
 # only on the host loopback interface and Traefik terminates TLS. Trust the
@@ -285,36 +522,88 @@ def _read_plugin_state():
         return {}
 
 
+def enabled_plugins(env):
+    """Return the ids of the enabled catalog plugins, in catalog order."""
+    wanted = set(p for p in env.get("OPENBAO_PLUGINS", "").split(",") if p)
+    return [p["id"] for p in PLUGIN_CATALOG if p["id"] in wanted]
+
+
+def catalog_entry(plugin_id):
+    return next((p for p in PLUGIN_CATALOG if p["id"] == plugin_id), None)
+
+
+def _image_id(image):
+    proc = subprocess.run(["podman", "image", "inspect", "--format", "{{.Id}}", image],
+                          capture_output=True, text=True, check=False)
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def pull_plugin_images(plugin_ids):
+    """Pull the pinned images of catalog plugins that are not on the node.
+
+    Return {plugin_id: error message} for the images that could not be
+    pulled.
+    """
+    errors = {}
+    for plugin_id in plugin_ids:
+        entry = catalog_entry(plugin_id)
+        if not entry or _image_id(entry["image"]):
+            continue
+        log(f"Pulling plugin image {entry['image']}")
+        proc = subprocess.run(["podman", "pull", "--quiet", entry["image"]],
+                              capture_output=True, text=True, check=False)
+        if proc.returncode != 0:
+            output = (proc.stderr or proc.stdout).strip().splitlines()
+            errors[plugin_id] = output[-1] if output else "pull failed"
+            log(f"Plugin {plugin_id}: cannot pull {entry['image']}: {errors[plugin_id]}", "<3>")
+    return errors
+
+
+def remove_plugin_images(plugin_ids):
+    """Remove the images of catalog plugins that are no longer enabled."""
+    for plugin_id in plugin_ids:
+        entry = catalog_entry(plugin_id)
+        if entry:
+            subprocess.run(["podman", "image", "rm", "--ignore", entry["image"]],
+                           capture_output=True, check=False)
+
+
 def install_plugins():
     """Copy the external plugin binaries from their images into PLUGIN_DIR.
 
-    It runs before OpenBao starts. A binary is extracted again only when
-    its image changes. Return the dict of installed plugins.
+    It runs before OpenBao starts: the bundled plugins (LDAP) and the
+    enabled catalog plugins whose image is on the node. It never pulls
+    images. A binary is extracted again only when its image changes;
+    binaries of plugins no longer enabled are deleted. Return the dict of
+    installed plugins, keyed by plugin id.
     """
     env = read_environment()
     os.makedirs(PLUGIN_DIR, mode=0o755, exist_ok=True)
     os.chmod(PLUGIN_DIR, 0o755)
     state = _read_plugin_state()
-    installed = {}
+    wanted = []
     for plugin in PLUGINS:
-        image = env.get(plugin["image_var"]) or os.environ.get(plugin["image_var"], "")
+        wanted.append(dict(plugin, image=env.get(plugin["image_var"]) or os.environ.get(plugin["image_var"], "")))
+    for plugin_id in enabled_plugins(env):
+        wanted.append(catalog_entry(plugin_id))
+    installed = {}
+    for plugin in wanted:
+        image = plugin["image"]
         version = _image_version(image)
         if not image or not version:
-            log(f"Plugin {plugin['name']}: image not available", "<4>")
+            log(f"Plugin {plugin['id']}: image not available", "<4>")
             continue
-        proc = subprocess.run(["podman", "image", "inspect", "--format", "{{.Id}}", image],
-                              capture_output=True, text=True, check=False)
-        if proc.returncode != 0:
-            log(f"Plugin {plugin['name']}: image {image} is not present on this node", "<4>")
+        image_id = _image_id(image)
+        if not image_id:
+            log(f"Plugin {plugin['id']}: image {image} is not present on this node", "<4>")
             continue
-        image_id = proc.stdout.strip()
         target = os.path.join(PLUGIN_DIR, plugin["command"])
-        record = state.get(plugin["name"], {})
+        record = state.get(plugin["id"], {})
         if record.get("image_id") == image_id and os.path.exists(target) \
-                and _sha256_file(target) == record.get("sha256"):
-            installed[plugin["name"]] = record
+                and _sha256_file(target) == record.get("sha256") and record.get("name") == plugin["name"]:
+            installed[plugin["id"]] = record
             continue
-        container = f"openbao-plugin-{plugin['name']}-extract"
+        container = f"openbao-plugin-{plugin['id']}-extract"
         tmp_target = os.path.join(PLUGIN_DIR, f".{plugin['command']}.tmp")
         try:
             subprocess.run(["podman", "create", "--replace", "--name", container, image],
@@ -322,7 +611,7 @@ def install_plugins():
             subprocess.run(["podman", "cp", f"{container}:/{plugin['command']}", tmp_target],
                            check=True, capture_output=True, text=True)
         except subprocess.CalledProcessError as ex:
-            log(f"Plugin {plugin['name']}: cannot extract the binary: {ex.stderr.strip()}", "<3>")
+            log(f"Plugin {plugin['id']}: cannot extract the binary: {ex.stderr.strip()}", "<3>")
             continue
         finally:
             subprocess.run(["podman", "rm", "--force", "--ignore", container],
@@ -332,32 +621,42 @@ def install_plugins():
         os.replace(tmp_target, target)
         record = {
             "type": plugin["type"],
+            "name": plugin["name"],
             "command": plugin["command"],
             "version": version,
             "sha256": _sha256_file(target),
             "image_id": image_id,
         }
-        installed[plugin["name"]] = record
-        log(f"Plugin {plugin['name']} {version} installed")
+        installed[plugin["id"]] = record
+        log(f"Plugin {plugin['id']} {version} installed")
+    # Delete the binaries of plugins that are no longer installed
+    keep = {record["command"] for record in installed.values()}
+    for entry in PLUGINS + PLUGIN_CATALOG:
+        path = os.path.join(PLUGIN_DIR, entry["command"])
+        if entry["command"] not in keep and os.path.exists(path):
+            os.unlink(path)
+            log(f"Plugin {entry['id']} removed")
     _write_file(PLUGIN_STATE_FILE, json.dumps(installed, indent=2) + "\n", 0o644)
     return installed
 
 
 def declared_plugins():
-    """Return {name: record} of the installed plugins with a valid binary."""
+    """Return {plugin id: record} of the installed plugins with a valid binary."""
     plugins = {}
-    for name, record in _read_plugin_state().items():
+    for plugin_id, record in _read_plugin_state().items():
+        if "name" not in record:
+            continue  # state written by a previous release: reinstalled at start
         path = os.path.join(PLUGIN_DIR, record.get("command", ""))
         try:
             if _sha256_file(path) == record.get("sha256"):
-                plugins[name] = record
+                plugins[plugin_id] = record
         except OSError:
             continue
     return plugins
 
 
 def ldap_plugin_available():
-    return "ldap" in declared_plugins()
+    return "auth-ldap" in declared_plugins()
 
 
 def ensure_breakglass_token():
@@ -760,9 +1059,156 @@ def list_snapshots():
     return sorted(snapshots, key=lambda s: s["created"], reverse=True)
 
 
+def ha_role(env):
+    role = env.get("OPENBAO_HA_ROLE", "standalone")
+    return role if role in HA_ROLES else "standalone"
+
+
+def raft_node_id(env):
+    return env.get("OPENBAO_RAFT_NODE_ID") or RAFT_NODE_ID
+
+
+def cluster_port(env):
+    """Return the TCP port of the Raft/cluster listener, or None."""
+    ports = os.environ.get("TCP_PORTS", "").split(",")
+    if len(ports) >= 4 and ports[3].strip().isdigit():
+        return int(ports[3])
+    value = env.get("OPENBAO_CLUSTER_PORT", "")
+    return int(value) if value.isdigit() else None
+
+
+def cluster_endpoint(env):
+    """Return (address, port) of the cluster listener of an HA instance, or None."""
+    if ha_role(env) == "standalone":
+        return None
+    port = cluster_port(env)
+    address = node_vpn_address() if port else None
+    if not port or not address:
+        return None
+    return address, port
+
+
+def raft_address(env):
+    """Return the host:port this instance has, or should have, in the Raft data."""
+    endpoint = cluster_endpoint(env)
+    return "{}:{}".format(*endpoint) if endpoint else LOCAL_RAFT_ADDRESS
+
+
+def ha_join_addresses(env):
+    return [a for a in env.get("OPENBAO_HA_JOIN_ADDRS", "").split(",") if a]
+
+
+def list_cluster_instances(exclude_self=True):
+    """Return the instances that accept members or joined an HA cluster.
+
+    Each item: module_id, node, ui_name, ha_cluster, ha_role, raft_node_id,
+    api_url, cluster_address, unseal_mode and the Transit settings (no
+    token: it never leaves its node).
+    """
+    try:
+        import agent
+        rdb = agent.redis_connect(use_replica=True)
+        records = agent.list_service_providers(rdb, CLUSTER_SERVICE, "tcp")
+    except Exception as ex:
+        log(f"Cannot list the OpenBao HA instances: {ex}", "<4>")
+        return []
+    instances = []
+    for rec in records:
+        if exclude_self and rec.get("module_id") == os.environ.get("MODULE_ID"):
+            continue
+        instances.append({
+            "module_id": rec.get("module_id", ""),
+            "node": rec.get("node", "") or "",
+            "ui_name": rec.get("ui_name", "") or "",
+            "ha_cluster": rec.get("ha_cluster", ""),
+            "ha_role": rec.get("ha_role", ""),
+            "raft_node_id": rec.get("raft_node_id", ""),
+            "api_url": rec.get("api_url", ""),
+            "cluster_address": "{}:{}".format(rec.get("host", ""), rec.get("port", "")),
+            "unseal_mode": rec.get("unseal_mode", ""),
+            "transit_address": rec.get("transit_address", ""),
+            "transit_mount": rec.get("transit_mount", ""),
+            "transit_key": rec.get("transit_key", ""),
+            "transit_tls_skip_verify": is_true(rec.get("transit_tls_skip_verify", "False")),
+        })
+    return sorted(instances, key=lambda i: (i["ha_cluster"], i["module_id"]))
+
+
+def raft_peers():
+    """Return the Raft peers [{node_id, address, leader, voter}] read with the
+    module token, or None if they cannot be read."""
+    token = read_module_token()
+    if not token:
+        return None
+    try:
+        response = api_request("sys/storage/raft/configuration", token=token)
+    except (urllib.error.URLError, OSError, ValueError) as ex:
+        log(f"Cannot read the Raft configuration: {ex}", "<4>")
+        return None
+    servers = (response.get("data") or {}).get("config", {}).get("servers", [])
+    return [{
+        "node_id": srv.get("node_id", ""),
+        "address": srv.get("address", ""),
+        "leader": bool(srv.get("leader")),
+        "voter": bool(srv.get("voter")),
+    } for srv in servers]
+
+
+def ha_leader_status():
+    """Return the unauthenticated sys/leader payload, or None."""
+    try:
+        return api_get("sys/leader", timeout=5)
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
+def write_raft_recovery(env):
+    """Make the Raft data a single-node cluster at raft_address(env).
+
+    OpenBao's documented outage recovery: with the server stopped, a
+    raft/peers.json file replaces the Raft configuration at the next start.
+    It moves a standalone instance's own entry from loopback to the node
+    VPN address when it becomes a primary (no member can have joined yet),
+    back to loopback when a primary without members returns standalone,
+    and detaches a restored or cloned HA instance from its old cluster.
+    The previous Raft files are copied to raft.bak-<timestamp> first.
+    Return True if the file was written, False if there is no Raft data.
+    """
+    proc = subprocess.run(
+        ["podman", "volume", "inspect", "--format", "{{.Mountpoint}}", DATA_VOLUME],
+        capture_output=True, text=True, check=False,
+    )
+    if proc.returncode != 0:
+        return False
+    mountpoint = proc.stdout.strip()
+    raft_dir = os.path.join(mountpoint, "raft")
+    if subprocess.run(["podman", "unshare", "test", "-e", os.path.join(raft_dir, "raft.db")],
+                      check=False).returncode != 0:
+        return False
+    peers = json.dumps([{
+        "id": raft_node_id(env),
+        "address": raft_address(env),
+        "non_voter": False,
+    }]) + "\n"
+    backup = os.path.join(mountpoint, time.strftime("raft.bak-%Y%m%d-%H%M%S"))
+    # Files are owned by the container user: work in the user namespace and
+    # give peers.json the owner of the raft directory, which deletes it
+    # after the recovery.
+    subprocess.run(
+        ["podman", "unshare", "sh", "-c",
+         'cp -a "$1" "$2" && cat > "$1/peers.json" && chown --reference="$1" "$1/peers.json"'
+         ' && chmod 0600 "$1/peers.json"',
+         "raft-recovery", raft_dir, backup],
+        input=peers, text=True, check=True,
+    )
+    log(f"Raft recovery: node {raft_node_id(env)} at {raft_address(env)}; previous files in {os.path.basename(backup)}")
+    return True
+
+
 def auto_initialize_wanted(env):
     return (
-        env["OPENBAO_UNSEAL_MODE"] in ("auto", "transit")
+        ha_role(env) != "member"
+        and env["OPENBAO_UNSEAL_MODE"] in ("auto", "transit")
         and is_true(env["OPENBAO_AUTO_INITIALIZE"])
         and bool(env["OPENBAO_USER_DOMAIN"])
         and bool(env["OPENBAO_LDAP_ADMIN_GROUP"])
@@ -790,7 +1236,8 @@ def render_config(env):
 
     static_part = []
     static_part.append(f"api_addr = {_hcl_string(api_addr)}")
-    static_part.append(f"cluster_addr = {_hcl_string(CLUSTER_ADDR)}")
+    cluster = cluster_endpoint(env)
+    static_part.append(f"cluster_addr = {_hcl_string('https://{}:{}'.format(*cluster) if cluster else CLUSTER_ADDR)}")
     static_part.append("ui = true")
     # Raft integrated storage: mlock is not needed and it is not available
     # to rootless containers.
@@ -798,12 +1245,19 @@ def render_config(env):
     static_part.append("")
     static_part.append('storage "raft" {')
     static_part.append('  path    = "/openbao/file"')
-    static_part.append(f"  node_id = {_hcl_string(RAFT_NODE_ID)}")
+    static_part.append(f"  node_id = {_hcl_string(raft_node_id(env))}")
+    if ha_role(env) == "member":
+        # Used only until this instance has joined: then the Raft data
+        # holds the cluster membership.
+        for address in ha_join_addresses(env):
+            static_part.append("  retry_join {")
+            static_part.append(f"    leader_api_addr = {_hcl_string(address)}")
+            static_part.append("  }")
     static_part.append("}")
     static_part.append("")
     static_part.append('listener "tcp" {')
     static_part.append('  address         = "0.0.0.0:8200"')
-    static_part.append('  cluster_address = "127.0.0.1:8201"')
+    static_part.append(f'  cluster_address = "{"0.0.0.0" if cluster else "127.0.0.1"}:{CLUSTER_CONTAINER_PORT}"')
     static_part.append("  tls_disable     = true")
     static_part.append(f"  x_forwarded_for_authorized_addrs      = {_hcl_string(','.join(XFF_AUTHORIZED_ADDRS))}")
     static_part.append('  x_forwarded_for_reject_not_authorized = "false"')
@@ -836,9 +1290,9 @@ def render_config(env):
         # directory into an empty base, which turns the documented default
         # (true) into false when the value is omitted.
         static_part.append("plugin_auto_register = true")
-        for name in sorted(plugins):
-            record = plugins[name]
-            static_part.append(f"plugin {_hcl_string(record['type'])} {_hcl_string(name)} {{")
+        for plugin_id in sorted(plugins):
+            record = plugins[plugin_id]
+            static_part.append(f"plugin {_hcl_string(record['type'])} {_hcl_string(record['name'])} {{")
             static_part.append(f"  command   = {_hcl_string(record['command'])}")
             static_part.append(f"  version   = {_hcl_string(record['version'])}")
             static_part.append(f"  sha256sum = {_hcl_string(record['sha256'])}")
@@ -875,7 +1329,7 @@ def render_config(env):
         params = discover_ldap(env["OPENBAO_USER_DOMAIN"])
         if not params:
             log("Self-initialization skipped: the user domain is not available", "<4>")
-        elif "ldap" not in plugins:
+        elif "auth-ldap" not in plugins:
             log("Self-initialization skipped: the LDAP auth plugin is not installed", "<4>")
         else:
             init_text = render_initialize(params, env)
@@ -899,6 +1353,8 @@ def render_config(env):
     vpn_api = vpn_api_endpoint(env)
     vpn_publish = f"--publish={vpn_api[0]}:{vpn_api[1]}:8200" if vpn_api else ""
     runtime_env_text += f"OPENBAO_PUBLISH_VPN_API={vpn_publish}\n"
+    cluster_publish = f"--publish={cluster[0]}:{cluster[1]}:{CLUSTER_CONTAINER_PORT}" if cluster else ""
+    runtime_env_text += f"OPENBAO_PUBLISH_CLUSTER={cluster_publish}\n"
     return {
         "runtime_env_text": runtime_env_text,
         "config_text": config_text,
