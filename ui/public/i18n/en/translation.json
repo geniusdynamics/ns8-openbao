@@ -121,7 +121,8 @@
     "send_test_email": "Send test email",
     "test_email_sent": "Test email sent",
     "test_email_failed": "Cannot send the test email",
-    "test_email_failed_description": "Check the SMTP smarthost settings and the system logs of the application."
+    "test_email_failed_description": "Check the SMTP smarthost settings and the system logs of the application.",
+    "ldap_plugin_missing": "The OpenBao LDAP auth plugin is not available on this node: update the module"
   },
   "about": {
     "title": "About"

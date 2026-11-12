@@ -245,9 +245,23 @@ changes later:
 - **Unseal keys lost** (manual unseal): if fewer than the threshold remain,
   the data cannot be decrypted by anybody. Keep copies in separate safe
   places.
-- **Directory login broken and no recovery keys** (C without step 4): no
-  new administrator access can be created. Restore a backup or
-  reinitialize.
+- **Directory login broken after automatic initialization** (C): the
+  self-initialization also creates a **break-glass administrator token**
+  (`ns8-admin` policy), so a failed or wrong directory setup can never lock
+  everybody out. It never leaves the node and expires 32 days after the
+  initialization. Use it to repair the configuration or to generate
+  recovery keys, then revoke it:
+
+  ```bash
+  runagent -m openbao1 openbao-breakglass-token   # prints the token
+  export BAO_ADDR=https://vault.example.org BAO_TOKEN=<token>
+  bao operator rotate-keys -init -key-shares=5 -key-threshold=3 -target=recovery
+  bao token revoke -self
+  ```
+
+  Only the administrator policy and this token are mandatory steps of the
+  self-initialization; directory login and the key/value store are allowed
+  to fail, and the failure is logged.
 
 ## Unseal modes
 
@@ -296,6 +310,15 @@ or with the **Log in with directory account** button of the *Status*
 page, which opens the web UI with the LDAP method selected
 (`https://<host>/ui/vault/auth?with=ldap%2F`). Create further policies and
 map other groups with `auth/ldap/groups/<group>`.
+
+Since OpenBao 2.7 the LDAP auth method is not built into OpenBao: it is
+an external plugin from the [openbao-plugins](https://github.com/openbao/openbao-plugins)
+project. The module lists its pinned image
+(`ghcr.io/openbao/openbao-plugin-auth-ldap`) among the module images, so
+the node pulls it at install and update time, and OpenBao never downloads
+anything at startup. Before each start the binary is copied from the image
+into `state/openbao-plugins/` and declared in the server configuration
+with its version and SHA-256 checksum.
 
 How OpenBao gets this configuration depends on its state, see
 [First-time setup](#first-time-setup):

@@ -68,7 +68,9 @@ if user_domain:
             fail("ldap_admin_group", admin_group, "ldap_admin_group_cannot_verify")
 
 if request.get("auto_initialize", False):
-    if requested_mode != "auto":
+    if not openbao.ldap_plugin_available() and not openbao.install_plugins().get("ldap"):
+        fail("auto_initialize", True, "ldap_plugin_missing")
+    elif requested_mode != "auto":
         fail("auto_initialize", True, "auto_initialize_requires_auto_unseal")
     elif not user_domain:
         fail("auto_initialize", True, "auto_initialize_requires_user_domain")

@@ -56,6 +56,14 @@ except urllib.error.HTTPError as ex:
     sys.exit(f"The token was refused: HTTP {ex.code}")
 
 mounts = mounts.get("data", mounts)
+
+if "ldap/" not in mounts:
+    # Since OpenBao 2.7 the LDAP auth method is an external plugin
+    try:
+        openbao.api_request("sys/plugins/catalog/auth/ldap", token=token)
+    except urllib.error.HTTPError:
+        sys.exit("The LDAP auth plugin is not registered: restart OpenBao "
+                 "(systemctl --user restart openbao.service) and check its logs")
 for req in openbao.directory_login_requests(params, admin_group, params["bind_password"]):
     if req["path"] == "sys/auth/ldap" and "ldap/" in mounts:
         if mounts["ldap/"].get("type") != "ldap":

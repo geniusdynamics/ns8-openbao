@@ -32,6 +32,9 @@ INIT_FILE = CONFIG_DIR + "/ns8-initialize.json"  # self-initialization requests
 CONTAINER_ENV_FILE = "openbao-container.env"
 RUNTIME_ENV_FILE = "openbao-runtime.env"  # podman arguments for openbao.service
 SEAL_KEY_FILE = "openbao-seal.key"
+PLUGIN_DIR = "openbao-plugins"  # mounted read-only on /openbao/plugins
+PLUGIN_STATE_FILE = "openbao-plugins.json"
+BREAKGLASS_TOKEN_FILE = "openbao-breakglass.token"
 
 DATA_VOLUME = "openbao-data"
 
@@ -57,6 +60,25 @@ path "*" {
 }
 """
 LDAP_BIND_PASSWORD_VAR = "NS8_LDAP_BIND_PASSWORD"
+BREAKGLASS_TOKEN_VAR = "NS8_BREAKGLASS_TOKEN"
+# The break-glass token expires by itself: the token store maximum TTL
+BREAKGLASS_TOKEN_TTL = "768h"
+
+# External plugins. Since OpenBao 2.7 the LDAP auth method is no longer
+# built in: it is distributed as an OCI image by the openbao-plugins
+# project. The image is listed in the org.nethserver.images label, so the
+# node pulls it with the module (no download at OpenBao startup) and
+# Renovate tracks its version. The binary is copied from the image into
+# PLUGIN_DIR by install_plugins() and declared in the server configuration.
+PLUGINS = [
+    {
+        "name": "ldap",
+        "type": "auth",
+        "image_var": "OPENBAO_PLUGIN_AUTH_LDAP_IMAGE",
+        "command": "openbao-plugin-auth-ldap",
+    },
+]
+PLUGIN_CONTAINER_DIR = "/openbao/plugins"
 # Podman translates this address to the node loopback interface, where
 # the NS8 ldapproxy listens (slirp4netns allow_host_loopback=true)
 HOST_LOOPBACK_ADDR = "10.0.2.2"
@@ -161,6 +183,120 @@ def ensure_seal_key():
 
 def _hcl_string(value):
     return json.dumps(str(value))
+
+
+def _image_version(image):
+    """Return the tag of an image URL, e.g. "v0.2.0", or ""."""
+    name = image.split("@", 1)[0]
+    last = name.rsplit("/", 1)[-1]
+    return last.rsplit(":", 1)[1] if ":" in last else ""
+
+
+def _sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as bfile:
+        for chunk in iter(lambda: bfile.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _read_plugin_state():
+    try:
+        with open(PLUGIN_STATE_FILE, encoding="utf-8") as sfile:
+            return json.load(sfile)
+    except (FileNotFoundError, ValueError):
+        return {}
+
+
+def install_plugins():
+    """Copy the external plugin binaries from their images into PLUGIN_DIR.
+
+    It runs before OpenBao starts. A binary is extracted again only when
+    its image changes. Return the dict of installed plugins.
+    """
+    env = read_environment()
+    os.makedirs(PLUGIN_DIR, mode=0o755, exist_ok=True)
+    os.chmod(PLUGIN_DIR, 0o755)
+    state = _read_plugin_state()
+    installed = {}
+    for plugin in PLUGINS:
+        image = env.get(plugin["image_var"]) or os.environ.get(plugin["image_var"], "")
+        version = _image_version(image)
+        if not image or not version:
+            log(f"Plugin {plugin['name']}: image not available", "<4>")
+            continue
+        proc = subprocess.run(["podman", "image", "inspect", "--format", "{{.Id}}", image],
+                              capture_output=True, text=True, check=False)
+        if proc.returncode != 0:
+            log(f"Plugin {plugin['name']}: image {image} is not present on this node", "<4>")
+            continue
+        image_id = proc.stdout.strip()
+        target = os.path.join(PLUGIN_DIR, plugin["command"])
+        record = state.get(plugin["name"], {})
+        if record.get("image_id") == image_id and os.path.exists(target) \
+                and _sha256_file(target) == record.get("sha256"):
+            installed[plugin["name"]] = record
+            continue
+        container = f"openbao-plugin-{plugin['name']}-extract"
+        tmp_target = os.path.join(PLUGIN_DIR, f".{plugin['command']}.tmp")
+        try:
+            subprocess.run(["podman", "create", "--replace", "--name", container, image],
+                           check=True, capture_output=True, text=True)
+            subprocess.run(["podman", "cp", f"{container}:/{plugin['command']}", tmp_target],
+                           check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as ex:
+            log(f"Plugin {plugin['name']}: cannot extract the binary: {ex.stderr.strip()}", "<3>")
+            continue
+        finally:
+            subprocess.run(["podman", "rm", "--force", "--ignore", container],
+                           check=False, capture_output=True)
+        # The OpenBao user inside the container must be able to execute it
+        os.chmod(tmp_target, 0o755)
+        os.replace(tmp_target, target)
+        record = {
+            "type": plugin["type"],
+            "command": plugin["command"],
+            "version": version,
+            "sha256": _sha256_file(target),
+            "image_id": image_id,
+        }
+        installed[plugin["name"]] = record
+        log(f"Plugin {plugin['name']} {version} installed")
+    _write_file(PLUGIN_STATE_FILE, json.dumps(installed, indent=2) + "\n", 0o644)
+    return installed
+
+
+def declared_plugins():
+    """Return {name: record} of the installed plugins with a valid binary."""
+    plugins = {}
+    for name, record in _read_plugin_state().items():
+        path = os.path.join(PLUGIN_DIR, record.get("command", ""))
+        try:
+            if _sha256_file(path) == record.get("sha256"):
+                plugins[name] = record
+        except OSError:
+            continue
+    return plugins
+
+
+def ldap_plugin_available():
+    return "ldap" in declared_plugins()
+
+
+def ensure_breakglass_token():
+    """Return the break-glass token ID, creating it once.
+
+    Self-initialization creates an administrator token with this ID, so a
+    failure of the directory login setup can never lock everybody out. The
+    token never leaves the node: read it with openbao-breakglass-token.
+    """
+    if not os.path.exists(BREAKGLASS_TOKEN_FILE):
+        token = "ns8bg" + secrets.token_hex(24)  # no "." allowed in custom IDs
+        fd = os.open(BREAKGLASS_TOKEN_FILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as tfile:
+            tfile.write(token + "\n")
+    with open(BREAKGLASS_TOKEN_FILE, encoding="utf-8") as tfile:
+        return tfile.read().strip()
 
 
 def discover_ldap(domain):
@@ -279,18 +415,52 @@ def directory_login_requests(params, admin_group, bindpass, container=True):
 
 
 def render_initialize(params, admin_group):
-    """Return the JSON text of the self-initialization configuration."""
+    """Return the JSON text of the self-initialization configuration.
+
+    If any request fails without allow_failure, OpenBao stays initialized
+    but refuses to unseal: only the admin policy and the break-glass token
+    are mandatory, and both are purely local operations. Directory login
+    and the key/value store may fail; the break-glass token then lets an
+    administrator fix the configuration.
+    """
     bindpass = {
         "eval_source": "env",
         "eval_type": "string",
         "env_var": LDAP_BIND_PASSWORD_VAR,
         "require_present": True,
     }
+    login = directory_login_requests(params, admin_group, bindpass)
     requests = []
-    for req in directory_login_requests(params, admin_group, bindpass):
-        body = {"operation": req["operation"], "path": req["path"], "data": req["data"]}
-        requests.append({req["name"]: body})
-    # A ready-to-use key/value store; not essential, so it may fail
+    # 1. administrator policy (mandatory)
+    policy = login[0]
+    requests.append({policy["name"]: {
+        "operation": policy["operation"], "path": policy["path"], "data": policy["data"],
+    }})
+    # 2. break-glass administrator token (mandatory)
+    requests.append({"ns8-breakglass-token": {
+        "operation": "update",
+        "path": "auth/token/create-orphan",
+        "data": {
+            "id": {
+                "eval_source": "env",
+                "eval_type": "string",
+                "env_var": BREAKGLASS_TOKEN_VAR,
+                "require_present": True,
+            },
+            "policies": [ADMIN_POLICY_NAME],
+            "no_default_policy": False,
+            "display_name": "ns8-breakglass",
+            "ttl": BREAKGLASS_TOKEN_TTL,
+            "renewable": False,
+        },
+    }})
+    # 3. directory login (allowed to fail)
+    for req in login[1:]:
+        requests.append({req["name"]: {
+            "operation": req["operation"], "path": req["path"], "data": req["data"],
+            "allow_failure": True,
+        }})
+    # 4. a ready-to-use key/value store (allowed to fail)
     requests.append({"ns8-kv-mount": {
         "operation": "update",
         "path": "sys/mounts/secret",
@@ -392,6 +562,18 @@ def render_config(env):
     static_part.append("  disable_hostname          = true")
     static_part.append("}")
 
+    plugins = declared_plugins()
+    if plugins:
+        static_part.append("")
+        static_part.append(f"plugin_directory = {_hcl_string(PLUGIN_CONTAINER_DIR)}")
+        for name in sorted(plugins):
+            record = plugins[name]
+            static_part.append(f"plugin {_hcl_string(record['type'])} {_hcl_string(name)} {{")
+            static_part.append(f"  command   = {_hcl_string(record['command'])}")
+            static_part.append(f"  version   = {_hcl_string(record['version'])}")
+            static_part.append(f"  sha256sum = {_hcl_string(record['sha256'])}")
+            static_part.append("}")
+
     container_env = []
     if unseal_mode == "auto":
         key_id, key_hex = ensure_seal_key()
@@ -423,11 +605,14 @@ def render_config(env):
     init_env = []
     if auto_initialize_wanted(env):
         params = discover_ldap(env["OPENBAO_USER_DOMAIN"])
-        if params:
+        if not params:
+            log("Self-initialization skipped: the user domain is not available", "<4>")
+        elif "ldap" not in plugins:
+            log("Self-initialization skipped: the LDAP auth plugin is not installed", "<4>")
+        else:
             init_text = render_initialize(params, env["OPENBAO_LDAP_ADMIN_GROUP"])
             init_env.append(f"{LDAP_BIND_PASSWORD_VAR}={params['bind_password']}")
-        else:
-            log("Self-initialization skipped: the user domain is not available", "<4>")
+            init_env.append(f"{BREAKGLASS_TOKEN_VAR}={ensure_breakglass_token()}")
 
     config_text = (
         "# Generated by ns8-openbao: manual changes are overwritten.\n"

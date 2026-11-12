@@ -51,7 +51,7 @@ buildah config --entrypoint=/ \
     --label="org.nethserver.tcp-ports-demand=2" \
     --label="org.nethserver.rootfull=0" \
     --label="org.nethserver.min-core=3.13.0" \
-    --label="org.nethserver.images=docker.io/openbao/openbao:2.7.2" \
+    --label="org.nethserver.images=docker.io/openbao/openbao:2.7.2 ghcr.io/openbao/openbao-plugin-auth-ldap:v0.2.0" \
     "${container}"
 # Commit the image
 buildah commit "${container}" "${repobase}/${reponame}"
