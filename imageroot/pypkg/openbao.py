@@ -602,6 +602,10 @@ def render_config(env):
     if plugins:
         static_part.append("")
         static_part.append(f"plugin_directory = {_hcl_string(PLUGIN_CONTAINER_DIR)}")
+        # Set explicitly: OpenBao merges the files of the configuration
+        # directory into an empty base, which turns the documented default
+        # (true) into false when the value is omitted.
+        static_part.append("plugin_auto_register = true")
         for name in sorted(plugins):
             record = plugins[name]
             static_part.append(f"plugin {_hcl_string(record['type'])} {_hcl_string(name)} {{")

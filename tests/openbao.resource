@@ -39,6 +39,10 @@ OpenBao Should Be Active
 
 Route Should Be Forbidden
     [Arguments]    ${host}
-    ${output}  ${rc} =    Execute Command    curl -sS -o /dev/null -w '%{http_code}' -H 'Host: ${host}' http://127.0.0.1/v1/sys/seal-status
+    ${output}  ${rc} =    Execute Command    curl -sS -o /dev/null -w '\%{http_code}' -H 'Host: ${host}' http://127.0.0.1/v1/sys/seal-status
     ...    return_rc=True
     Should Be Equal    ${output}    403
+
+Remove IP Allow-list
+    [Arguments]    ${module_id}    ${host}
+    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host": "${host}", "http2https": false, "ip_allowlist": []}'
