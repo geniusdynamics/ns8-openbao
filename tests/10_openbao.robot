@@ -60,7 +60,7 @@ Check if get-openbao-status reports the server state
     ${output}  ${rc} =    Execute Command    api-cli run module/${module_id}/get-openbao-status
     ...    return_rc=True
     Should Be Equal As Integers    ${rc}  0
-    &{status} =    Evaluate    json.loads('''${output}''')    modules=json
+    &{status} =    Evaluate    json.loads($output)    modules=json
     Should Be Equal    ${status.service_active}    ${True}
     Should Be Equal    ${status.initialized}    ${False}
     Should Be Equal    ${status.ui_url}    https://${HOST}/ui/
@@ -109,7 +109,7 @@ Check if the Prometheus target is published
     ...    return_rc=True
     Should Be Equal As Integers    ${rc}  0
     Should Contain    ${output}    /v1/sys/metrics
-    ${target} =    Evaluate    json.loads('''${output}''')[0]['targets'][0]    modules=json
+    ${target} =    Evaluate    json.loads($output)[0]['targets'][0]    modules=json
     Set Suite Variable    ${metrics_target}    ${target}
 
 Check if Prometheus metrics can be scraped from the cluster VPN address
@@ -170,7 +170,7 @@ Check if an active root token is detected
     ${output}  ${rc} =    Execute Command    api-cli run module/${module_id}/get-openbao-status
     ...    return_rc=True
     Should Be Equal As Integers    ${rc}  0
-    &{status} =    Evaluate    json.loads('''${output}''')    modules=json
+    &{status} =    Evaluate    json.loads($output)    modules=json
     Should Be Equal    ${status.module_token}    valid
     Should Be Equal    ${status.root_token_present}    ${True}
     ${output}  ${rc} =    Execute Command    runagent -m ${module_id} env BAO_TOKEN=${root_token} openbao-root-tokens

@@ -78,6 +78,14 @@ path "*" {
   capabilities = ["create", "read", "update", "patch", "delete", "list", "scan", "sudo"]
 }
 """
+# OpenBao applies only the most specific matching path of a token's
+# policies; capabilities are merged only for identical paths. Repeat the
+# paths of the built-in policies with full capabilities, so that mapping
+# one of them to an administrator never narrows their access.
+ADMIN_POLICY += "".join(f"""path "{path}" {{
+  capabilities = ["create", "read", "update", "patch", "delete", "list", "scan", "sudo"]
+}}
+""" for path in ("secret/data/*", "secret/metadata/*", "pki/issue/ns8-server", "pki/cert/ca"))
 # Policies created by the module, offered in the group mapping table
 BUILTIN_POLICIES = {
     "ns8-admin": ADMIN_POLICY,

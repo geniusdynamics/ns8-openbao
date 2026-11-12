@@ -16,10 +16,10 @@ Bao Request
     ${output}  ${rc} =    Execute Command    curl -sS -f -X ${method} -H 'Host: ${host}' ${token_header} ${data_arg} http://127.0.0.1/v1/${path}
     ...    return_rc=True
     Should Be Equal As Integers    ${rc}  0
-    IF    '''${output}''' == ''
+    IF    $output == ''
         RETURN    &{EMPTY}
     END
-    &{response} =    Evaluate    json.loads('''${output}''')    modules=json
+    &{response} =    Evaluate    json.loads($output)    modules=json
     RETURN    &{response}
 
 Seal Status
