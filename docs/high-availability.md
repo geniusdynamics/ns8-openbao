@@ -17,8 +17,9 @@ single VM.
 - **Fixed Raft node ID `ns8-openbao`** and cluster address
   `https://127.0.0.1:8201`. They are stored in the Raft data; the fixed
   values let restore and clone to another instance name work. HA needs a
-  unique node ID per member and a cluster address reachable from the other
-  nodes.
+  node ID that is unique within the Raft cluster (only joining members
+  need a new one, see below) and a cluster address reachable from the
+  other nodes.
 - **Cluster port is local**: 8201 is not published. Members must reach
   each other's cluster port (mutual TLS, managed by OpenBao) on the node
   VPN addresses.
@@ -33,12 +34,23 @@ single VM.
 1. A member instance is installed with a `ha_leader` setting naming an
    existing instance (`module_id`). It discovers the leader's cluster
    network API through the `openbao` service provider record.
-2. New members use `node_id = MODULE_ID`; the first (existing) instance
-   keeps `ns8-openbao`, so it needs no migration of its own node ID.
+2. Node IDs: every single-node instance, including all 1.x installs,
+   keeps the fixed `ns8-openbao`, and it never changes. Only an instance
+   installed as a member of an existing one gets its own ID
+   (`node_id = MODULE_ID`, unique in the NethServer cluster). Raft needs
+   IDs to be unique only within one Raft cluster, so the first instance
+   needs no node ID migration, and single-node installs, restore and
+   clone keep working as today.
 3. The cluster port is published on a fourth TCP port, bound to the node
-   VPN address; `cluster_addr` becomes `https://<vpn address>:<port>`. The
-   first instance's own Raft address must be updated to that value with
-   `bao operator raft` while it is the only voter (the risky step).
+   VPN address; `cluster_addr` becomes `https://<vpn address>:<port>`.
+   This, not the node ID, is the risky step: the first instance's own
+   Raft entry still holds `127.0.0.1:8201`. Raft identifies the local
+   server by ID, so a single node keeps electing itself, but members
+   could not reach it. Before the first member joins, rewrite the entry
+   with OpenBao's documented outage-recovery procedure: stop the
+   instance, write `raft/peers.json` with
+   `[{"id": "ns8-openbao", "address": "<vpn address>:<port>", "non_voter": false}]`,
+   and start it. Take a Raft snapshot first.
 4. Members start with `retry_join { leader_api_addr = "<leader cluster
    network API>" }`, and are unsealed with the same seal (Transit
    recommended).

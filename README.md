@@ -73,7 +73,7 @@ api-cli run configure-module --agent module/openbao1 --data - <<EOF
   "log_level": "info",
   "audit_log": true,
   "user_domain": "ad.example.org",
-  "ldap_admin_group": "Domain Admins",
+  "ldap_admin_group": "domain admins",
   "auto_initialize": false,
   "notify_recipients": ["security@example.org"],
   "ip_allowlist": ["192.168.1.0/24"],
@@ -355,6 +355,24 @@ Directory, or an external LDAP/AD domain) and an administrators group in
   Directory, `uid`/`posixGroup` `memberUid` for OpenLDAP
 - the `ns8-admin` policy, with full access, mapped to the administrators
   group
+
+### Default NethServer domain accounts
+
+Both NethServer account providers create a builtin group named
+**`domain admins`**, so it is the natural administrators group, and the
+*Settings* page and the setup wizard propose it:
+
+- **Internal OpenLDAP**: the *admuser* given when the domain is created
+  (for example `admin`) is created as a member of `domain admins`.
+- **Samba Active Directory**: with the user name `administrator`, the
+  builtin Samba administrator is used; with any other name, that user is
+  created, added to `domain admins`, and the builtin `administrator` is
+  disabled.
+
+There is no default password: it is the one typed when the domain was
+created. An external LDAP/AD domain has its own groups (for example
+`Domain Admins` in Active Directory). OpenBao matches group names without
+regard to case.
 
 Users log in with their domain account:
 
