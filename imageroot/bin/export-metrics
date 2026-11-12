@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# Print OpenBao state metrics in Prometheus text format. The node runs
+# this command every 5 minutes (core 3.24 or later) and the metrics module
+# scrapes the result; the node adds the module="<module_id>" label.
+# The alert rules published by configure-module use these metrics.
+#
+
+import sys
+import openbao
+
+env = openbao.read_environment()
+if not env.get("TRAEFIK_HOST"):
+    sys.exit(0)  # not configured yet: no metrics, no alerts
+
+status = openbao.get_seal_status(timeout=5)
+
+
+def gauge(name, help_text, value, labels=""):
+    print(f"# HELP {name} {help_text}")
+    print(f"# TYPE {name} gauge")
+    print(f"{name}{labels} {value}")
+
+
+gauge("openbao_up", "The OpenBao API answers", 1 if status is not None else 0)
+if status is not None:
+    gauge("openbao_initialized", "OpenBao is initialized", 1 if status.get("initialized") else 0)
+    gauge("openbao_sealed", "OpenBao is sealed", 1 if status.get("sealed") else 0)
+    version = str(status.get("version", "")).replace("\\", "").replace('"', "")
+    gauge("openbao_build_info", "OpenBao server version", 1, f'{{version="{version}"}}')
+gauge("openbao_auto_unseal", "Automatic unseal is configured",
+      1 if env["OPENBAO_UNSEAL_MODE"] == "auto" else 0)

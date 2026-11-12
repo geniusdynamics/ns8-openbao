@@ -1,0 +1,40 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+import json
+import sys
+import agent
+import openbao
+
+request = json.load(sys.stdin)
+env = openbao.read_environment()
+recipients = request.get("recipients") or openbao.notify_recipients(env)
+
+
+def validation_failed(field, value, error):
+    agent.set_status("validation-failed")
+    json.dump([{"field": field, "parameter": field, "value": value, "error": error}], fp=sys.stdout)
+    sys.exit(3)
+
+
+if not recipients:
+    validation_failed("notify_recipients", "", "notify_recipients_required")
+
+smarthost = agent.get_smarthost_settings(agent.redis_connect(use_replica=True))
+if not smarthost.get("enabled"):
+    validation_failed("notify_recipients", ",".join(recipients), "smarthost_disabled")
+
+ok, error = openbao.send_notification(
+    env, "Test notification",
+    "This is a test message. OpenBao notifications are delivered to this address.",
+    recipients=recipients,
+)
+if not ok:
+    print(agent.SD_ERR + f"Cannot send the test email: {error}", file=sys.stderr)
+    sys.exit(1)
+
+json.dump({"recipients": recipients}, fp=sys.stdout)

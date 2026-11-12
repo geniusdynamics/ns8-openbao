@@ -1,0 +1,13 @@
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+[Unit]
+Description=OpenBao email notifications check
+
+[Service]
+Type=oneshot
+WorkingDirectory=%E/state
+ExecStart=runagent openbao-notify
+SyslogIdentifier=%N

@@ -1,23 +1,29 @@
 #!/usr/bin/env python3
 
 #
-# Copyright (C) 2022 Nethesis S.r.l.
+# Copyright (C) 2026 Genius Dynamics
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 
-import sys
 import json
+import sys
 import agent
+import openbao
 
 request = json.load(sys.stdin)
+original_environment = request["environment"]
 
-original_environment = request['environment']
-
+# Backups of older module releases may lack some variables: use defaults
 for evar in [
         "TRAEFIK_HOST",
         "TRAEFIK_HTTP2HTTPS",
-        "TRAEFIK_LETS_ENCRYPT",
+        "OPENBAO_LOG_LEVEL",
+        "OPENBAO_AUDIT_LOG",
+        "OPENBAO_UNSEAL_MODE",
+        "OPENBAO_USER_DOMAIN",
+        "OPENBAO_LDAP_ADMIN_GROUP",
+        "OPENBAO_NOTIFY_RECIPIENTS",
     ]:
-    agent.set_env(evar, original_environment[evar])
-
-agent.dump_env()
+    value = original_environment.get(evar, openbao.DEFAULTS.get(evar))
+    if value is not None:
+        agent.set_env(evar, value)

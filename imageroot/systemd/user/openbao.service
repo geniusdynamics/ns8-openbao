@@ -1,28 +1,49 @@
 #
-# Copyright (C) 2022 Nethesis S.r.l.
+# Copyright (C) 2026 Genius Dynamics
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 
 #
-# This systemd unit starts a openbao instance using Podman.
-# Most parts of this file come from podman-generate-systemd.
+# OpenBao server with Raft integrated storage. The API and web UI are
+# published on the host loopback interface only: Traefik exposes them on
+# the configured host name with TLS. The container reaches the node
+# ldapproxy for directory login at 10.0.2.2 (host loopback). The
+# Prometheus metrics listener is published on the node cluster VPN
+# address, for the NS8 metrics module.
 #
-
 [Unit]
-Description=Podman openbao.service
-Requires=openbao-app.service 
-Before=openbao-app.service 
+Description=OpenBao secrets manager
 
 [Service]
 Environment=PODMAN_SYSTEMD_UNIT=%n
-EnvironmentFile=-%S/state/environment
+EnvironmentFile=%E/state/environment
+# Written by openbao-write-config (ExecStartPre): systemd reads it again
+# before ExecStart
+EnvironmentFile=-%E/state/openbao-runtime.env
+WorkingDirectory=%E/state
 Restart=always
-TimeoutStopSec=70
-ExecStartPre=/bin/rm -f %t/openbao.pid %t/openbao.pod-id
-ExecStartPre=/usr/bin/podman pod create --infra-conmon-pidfile %t/openbao.pid  --pod-id-file %t/openbao.pod-id  --name openbao  --publish 127.0.0.1:${TCP_PORT}:8200  --replace
-ExecStart=/usr/bin/podman pod start --pod-id-file %t/openbao.pod-id
-ExecStop=/usr/bin/podman pod stop --ignore --pod-id-file %t/openbao.pod-id -t 10
-ExecStopPost=/usr/bin/podman pod rm --ignore -f --pod-id-file %t/openbao.pod-id
+TimeoutStartSec=120
+ExecStartPre=/bin/rm -f %t/openbao.pid %t/openbao.ctr-id
+ExecStartPre=runagent openbao-write-config
+ExecStart=/usr/bin/podman run \
+    --detach \
+    --conmon-pidfile=%t/openbao.pid \
+    --cidfile=%t/openbao.ctr-id \
+    --cgroups=no-conmon \
+    --replace --name=%N \
+    --cap-drop=all \
+    --security-opt=no-new-privileges \
+    --network=slirp4netns:allow_host_loopback=true \
+    --publish=127.0.0.1:${TCP_PORT}:8200 \
+    $OPENBAO_PUBLISH_METRICS \
+    --volume=openbao-data:/openbao/file:Z \
+    --volume=%E/state/openbao-config:/openbao/config:ro,Z \
+    --env-file=%E/state/openbao-container.env \
+    ${OPENBAO_IMAGE} server
+ExecStartPost=-runagent openbao-wait-ready 90
+ExecReload=/usr/bin/podman kill --signal=HUP --cidfile=%t/openbao.ctr-id
+ExecStop=/usr/bin/podman stop --ignore --cidfile=%t/openbao.ctr-id -t 30
+ExecStopPost=/usr/bin/podman rm --ignore -f --cidfile=%t/openbao.ctr-id
 PIDFile=%t/openbao.pid
 Type=forking
 

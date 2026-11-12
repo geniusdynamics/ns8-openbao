@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# Publish the OpenBao Prometheus scrape target to the NS8 metrics module.
+# Prometheus may run on any node of the cluster: the target is the
+# metrics-only listener published on this node cluster VPN address.
+#
+# The file_sd labels __metrics_path__ and __param_format select the
+# OpenBao endpoint /v1/sys/metrics?format=prometheus.
+#
+
+import json
+import os
+import sys
+import agent
+import openbao
+
+module_id = os.environ["MODULE_ID"]
+endpoint = openbao.metrics_endpoint()
+
+rdb = agent.redis_connect(privileged=True)
+key = f"module/{module_id}/metrics_targets"
+if endpoint:
+    targets = [{
+        "targets": [f"{endpoint[0]}:{endpoint[1]}"],
+        "labels": {
+            "node": os.environ["NODE_ID"],  # no "_id" suffix for Metrics
+            "__metrics_path__": openbao.METRICS_PATH,
+            "__param_format": "prometheus",
+        },
+    }]
+    # JSON is valid YAML
+    rdb.hset(key, "openbao", json.dumps(targets))
+    print(f"Prometheus target published: {endpoint[0]}:{endpoint[1]}", file=sys.stderr)
+else:
+    rdb.hdel(key, "openbao")
+    print(agent.SD_WARNING + "No metrics endpoint: Prometheus target removed", file=sys.stderr)
+rdb.publish(f"module/{module_id}/event/metrics-target-changed", "{}")

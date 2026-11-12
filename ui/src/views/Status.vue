@@ -1,14 +1,27 @@
 <!--
   Copyright (C) 2023 Nethesis S.r.l.
+  Copyright (C) 2026 Genius Dynamics
   SPDX-License-Identifier: GPL-3.0-or-later
 -->
 <template>
   <cv-grid fullWidth>
     <cv-row>
-      <cv-column class="page-title">
+      <cv-column class="page-title title-with-actions">
         <h2>{{ $t("status.title") }}</h2>
+        <NsButton
+          kind="ghost"
+          :icon="Rocket20"
+          :disabled="loading.getOpenbaoStatus"
+          @click="showWizard"
+          >{{ $t("wizard.open_wizard") }}</NsButton
+        >
       </cv-column>
     </cv-row>
+    <SetupWizard
+      :visible="isWizardShown"
+      @hide="isWizardShown = false"
+      @configured="onWizardConfigured"
+    />
     <cv-row v-if="error.getStatus">
       <cv-column>
         <NsInlineNotification
@@ -39,48 +52,126 @@
         />
       </cv-column>
     </cv-row>
+    <cv-row v-if="error.getOpenbaoStatus">
+      <cv-column>
+        <NsInlineNotification
+          kind="error"
+          :title="$t('error.cannot_retrieve_openbao_status')"
+          :description="error.getOpenbaoStatus"
+          :showCloseButton="false"
+        />
+      </cv-column>
+    </cv-row>
+    <!-- OpenBao server state -->
+    <cv-row v-if="openbaoNotice">
+      <cv-column>
+        <NsInlineNotification
+          :kind="openbaoNotice.kind"
+          :title="openbaoNotice.title"
+          :description="openbaoNotice.description"
+          :actionLabel="openbao.ui_url ? '' : $t('wizard.start_wizard')"
+          @action="showWizard"
+          :showCloseButton="false"
+        />
+      </cv-column>
+    </cv-row>
     <cv-row>
       <cv-column :md="4" :max="4">
         <NsInfoCard
           light
-          :title="$t('status.openbao_webapp')"
-          :description="this.host ? this.host : $t('status.not_configured')"
-          :icon="Wikis32"
-          :loading="loading.getConfiguration"
-          :isErrorShown="error.getConfiguration"
-          :errorTitle="$t('error.cannot_retrieve_configuration')"
-          :errorDescription="error.getConfiguration"
+          :title="openbaoStateLabel"
+          :description="openbaoVersionLabel"
+          :icon="Locked32"
+          :loading="loading.getOpenbaoStatus"
           class="min-height-card"
         >
           <template slot="content">
-            <NsButton
-              v-if="this.host"
-              kind="ghost"
-              :icon="Launch20"
-              :disabled="loading.getConfiguration"
-              @click="goToWebapp"
-            >
-              {{ $t("status.open_webapp") }}
-            </NsButton>
-            <NsButton
-              v-else
-              kind="ghost"
-              :disabled="loading.getConfiguration"
-              :icon="ArrowRight20"
-              @click="goToAppPage(instanceName, 'settings')"
-            >
-              {{ $t("status.configure") }}
-            </NsButton>
+            <div class="card-actions">
+              <NsButton
+                v-if="openbao.ui_url"
+                kind="ghost"
+                :icon="Launch20"
+                :disabled="loading.getOpenbaoStatus"
+                @click="openOpenbaoUi"
+              >
+                {{ $t("status.open_openbao") }}
+              </NsButton>
+              <NsButton
+                v-else
+                kind="ghost"
+                :icon="Rocket20"
+                :disabled="loading.getOpenbaoStatus"
+                @click="showWizard"
+              >
+                {{ $t("wizard.start_wizard") }}
+              </NsButton>
+              <NsButton
+                kind="ghost"
+                :icon="Restart20"
+                :disabled="loading.getOpenbaoStatus"
+                @click="getOpenbaoStatus"
+              >
+                {{ $t("status.refresh") }}
+              </NsButton>
+            </div>
           </template>
         </NsInfoCard>
       </cv-column>
       <cv-column :md="4" :max="4">
         <NsInfoCard
           light
+          :title="$t('status.unseal_mode_' + openbao.unseal_mode)"
+          :description="
+            $t('status.unseal_mode') +
+            ': ' +
+            $t('status.unseal_mode_' + openbao.unseal_mode + '_description')
+          "
+          :icon="Password32Icon"
+          :loading="loading.getOpenbaoStatus"
+          class="min-height-card"
+        />
+      </cv-column>
+      <cv-column :md="4" :max="4">
+        <NsInfoCard
+          light
+          :title="openbao.user_domain || $t('status.directory_login_disabled')"
+          :description="$t('status.directory_login')"
+          :icon="Group32Icon"
+          :loading="loading.getOpenbaoStatus"
+          class="min-height-card"
+        >
+          <template slot="content">
+            <div class="card-actions">
+              <NsButton
+                v-if="ldapLoginUrl"
+                kind="ghost"
+                :icon="Launch20"
+                :disabled="loading.getOpenbaoStatus"
+                @click="openLdapLogin"
+              >
+                {{ $t("status.ldap_login") }}
+              </NsButton>
+              <NsButton
+                kind="ghost"
+                :icon="Settings20"
+                :disabled="loading.getOpenbaoStatus"
+                @click="goToAppPage(instanceName, 'settings')"
+              >
+                {{ $t("status.configure") }}
+              </NsButton>
+            </div>
+          </template>
+        </NsInfoCard>
+      </cv-column>
+    </cv-row>
+    <cv-row>
+      <cv-column :md="4" :max="4">
+        <NsInfoCard
+          light
           :title="status.instance || '-'"
           :description="$t('status.app_instance')"
           :icon="Application32"
-          :loading="loading.getStatus || loading.getConfiguration"
+          :loading="loading.getStatus"
           class="min-height-card"
         />
       </cv-column>
@@ -91,7 +182,7 @@
           :titleTooltip="installationNodeTitleTooltip"
           :description="$t('status.installation_node')"
           :icon="Chip32"
-          :loading="loading.getStatus || loading.getConfiguration"
+          :loading="loading.getStatus"
           class="min-height-card"
         />
       </cv-column>
@@ -111,6 +202,9 @@
           :totalFileCountLabel="core.$t('backup.total_file_count')"
           :backupDisabledLabel="core.$t('common.disabled')"
           :showMoreLabel="core.$t('common.show_more')"
+          :multipleUncertainStatusLabel="
+            core.$t('backup.some_backups_failed_or_are_pending')
+          "
           :moduleId="instanceName"
           :moduleUiName="instanceLabel"
           :repositories="backupRepositories"
@@ -295,9 +389,13 @@ import {
   UtilService,
   PageTitleService,
 } from "@nethserver/ns8-ui-lib";
+import Password32 from "@carbon/icons-vue/es/password/32";
+import SetupWizard from "@/components/SetupWizard";
+import Group32 from "@carbon/icons-vue/es/group/32";
 
 export default {
   name: "Status",
+  components: { SetupWizard },
   mixins: [
     TaskService,
     QueryParamService,
@@ -314,24 +412,42 @@ export default {
         page: "status",
       },
       urlCheckInterval: null,
+      Password32Icon: Password32,
+      Group32Icon: Group32,
       isRedirectChecked: false,
       redirectTimeout: 0,
-      host: "",
       status: {
         instance: "",
         services: [],
         images: [],
         volumes: [],
       },
+      openbao: {
+        service_active: false,
+        reachable: false,
+        initialized: false,
+        sealed: true,
+        version: "",
+        threshold: 0,
+        shares: 0,
+        progress: 0,
+        unseal_mode: "manual",
+        user_domain: "",
+        ui_url: "",
+      },
+      isOpenbaoStatusLoaded: false,
+      isWizardShown: false,
+      isWizardAutoOpened: false,
       backupRepositories: [],
       backups: [],
       loading: {
+        getOpenbaoStatus: false,
         getStatus: false,
         listBackupRepositories: false,
         listBackups: false,
-        getConfiguration: false,
       },
       error: {
+        getOpenbaoStatus: "",
         getStatus: "",
         listBackupRepositories: "",
         listBackups: "",
@@ -340,6 +456,85 @@ export default {
   },
   computed: {
     ...mapState(["instanceName", "instanceLabel", "core", "appName"]),
+    ldapLoginUrl() {
+      // The OpenBao web UI preselects the auth method mounted at the path
+      // given by the "with" query parameter
+      const ob = this.openbao;
+      if (!ob.ui_url || !ob.user_domain || !ob.initialized) {
+        return "";
+      }
+      return ob.ui_url + "vault/auth?with=ldap%2F";
+    },
+    openbaoStateLabel() {
+      if (!this.isOpenbaoStatusLoaded) {
+        return "-";
+      }
+      const ob = this.openbao;
+      if (!ob.ui_url) {
+        return this.$t("status.not_configured");
+      } else if (!ob.service_active) {
+        return this.$t("status.not_running");
+      } else if (!ob.reachable) {
+        return this.$t("status.not_reachable");
+      } else if (!ob.initialized) {
+        return this.$t("status.not_initialized");
+      } else if (ob.sealed) {
+        return this.$t("status.sealed");
+      }
+      return this.$t("status.unsealed");
+    },
+    openbaoVersionLabel() {
+      if (this.openbao.version) {
+        return (
+          this.$t("status.openbao_server") +
+          " - " +
+          this.$t("status.version", { version: this.openbao.version })
+        );
+      }
+      return this.$t("status.openbao_server");
+    },
+    openbaoNotice() {
+      if (!this.isOpenbaoStatusLoaded) {
+        return null;
+      }
+      const ob = this.openbao;
+      if (!ob.ui_url) {
+        return {
+          kind: "info",
+          title: this.$t("status.configure_first_title"),
+          description: this.$t("status.configure_first_description"),
+        };
+      } else if (!ob.service_active || !ob.reachable) {
+        return {
+          kind: "error",
+          title: this.$t("status.not_running_title"),
+          description: this.$t("status.not_running_description"),
+        };
+      } else if (!ob.initialized) {
+        return {
+          kind: "warning",
+          title: this.$t("status.initialize_title"),
+          description:
+            ob.unseal_mode === "auto"
+              ? this.$t("status.initialize_description_auto")
+              : this.$t("status.initialize_description"),
+        };
+      } else if (ob.sealed) {
+        return {
+          kind: "warning",
+          title: this.$t("status.sealed_title"),
+          description:
+            ob.seal_type === "shamir"
+              ? this.$t("status.sealed_description", {
+                  threshold: ob.threshold,
+                  shares: ob.shares,
+                  progress: ob.progress,
+                })
+              : this.$t("status.sealed_auto_description"),
+        };
+      }
+      return null;
+    },
     installationNodeTitle() {
       if (this.status && this.status.node) {
         if (this.status.node_ui_name) {
@@ -379,30 +574,33 @@ export default {
     clearTimeout(this.redirectTimeout);
   },
   created() {
-    this.getConfiguration();
+    this.getOpenbaoStatus();
     this.getStatus();
     this.listBackupRepositories();
   },
   methods: {
-    goToWebapp() {
-      window.open(`https://${this.host}`, "_blank");
+    openOpenbaoUi() {
+      window.open(this.openbao.ui_url, "_blank", "noopener");
     },
-    async getConfiguration() {
-      this.loading.getConfiguration = true;
-      this.error.getConfiguration = "";
-      const taskAction = "get-configuration";
+    openLdapLogin() {
+      window.open(this.ldapLoginUrl, "_blank", "noopener");
+    },
+    async getOpenbaoStatus() {
+      this.loading.getOpenbaoStatus = true;
+      this.error.getOpenbaoStatus = "";
+      const taskAction = "get-openbao-status";
       const eventId = this.getUuid();
 
       // register to task error
       this.core.$root.$once(
         `${taskAction}-aborted-${eventId}`,
-        this.getConfigurationAborted
+        this.getOpenbaoStatusAborted
       );
 
       // register to task completion
       this.core.$root.$once(
         `${taskAction}-completed-${eventId}`,
-        this.getConfigurationCompleted
+        this.getOpenbaoStatusCompleted
       );
 
       const res = await to(
@@ -419,20 +617,33 @@ export default {
 
       if (err) {
         console.error(`error creating task ${taskAction}`, err);
-        this.error.getConfiguration = this.getErrorMessage(err);
-        this.loading.getConfiguration = false;
+        this.error.getOpenbaoStatus = this.getErrorMessage(err);
+        this.loading.getOpenbaoStatus = false;
         return;
       }
     },
-    getConfigurationAborted(taskResult, taskContext) {
+    getOpenbaoStatusAborted(taskResult, taskContext) {
       console.error(`${taskContext.action} aborted`, taskResult);
-      this.error.getConfiguration = this.$t("error.generic_error");
-      this.loading.getConfiguration = false;
+      this.error.getOpenbaoStatus = this.$t("error.generic_error");
+      this.loading.getOpenbaoStatus = false;
     },
-    getConfigurationCompleted(taskContext, taskResult) {
-      const config = taskResult.output;
-      this.host = config.host;
-      this.loading.getConfiguration = false;
+    getOpenbaoStatusCompleted(taskContext, taskResult) {
+      this.openbao = taskResult.output;
+      this.isOpenbaoStatusLoaded = true;
+      this.loading.getOpenbaoStatus = false;
+      // Guide new instances through the setup, once per page visit.
+      // Advanced users can cancel and use the Settings page.
+      if (!this.openbao.ui_url && !this.isWizardAutoOpened) {
+        this.isWizardAutoOpened = true;
+        this.showWizard();
+      }
+    },
+    showWizard() {
+      this.isWizardShown = true;
+    },
+    onWizardConfigured() {
+      this.getOpenbaoStatus();
+      this.getStatus();
     },
     async getStatus() {
       this.loading.getStatus = true;
@@ -595,6 +806,19 @@ export default {
 
 <style scoped lang="scss">
 @import "../styles/carbon-utils";
+
+.title-with-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+}
 
 .break-word {
   word-wrap: break-word;

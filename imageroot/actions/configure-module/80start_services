@@ -1,17 +1,46 @@
-#!/bin/bash
+#!/usr/bin/env python3
 
 #
-# Copyright (C) 2023 Nethesis S.r.l.
+# Copyright (C) 2026 Genius Dynamics
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-set -e
 
-# Redirect any output to the journal (stderr)
-exec 1>&2
+#
+# Apply the configuration. A restart is done only when OpenBao cannot
+# reload the changed settings: with manual unseal a restart seals the
+# server, so avoid it whenever possible.
+#
 
-# If the control reaches this step, the service can be enabled and started
+import sys
+import agent
+import openbao
 
-touch smarthost.env
 
-systemctl --user enable openbao.service
-systemctl --user restart openbao.service
+def systemctl(*args):
+    agent.run_helper("systemctl", "--user", *args).check_returncode()
+
+
+record = openbao.write_config()
+status = openbao.get_seal_status()
+change = openbao.required_change(record, initialized=bool(status and status.get("initialized")))
+
+systemctl("enable", "openbao.service")
+
+if not openbao.service_is_active():
+    print("Starting OpenBao", file=sys.stderr)
+    systemctl("start", "openbao.service")
+elif change == "restart":
+    print("Restarting OpenBao to apply the new configuration", file=sys.stderr)
+    systemctl("restart", "openbao.service")
+elif change == "reload":
+    print("Reloading the OpenBao configuration", file=sys.stderr)
+    systemctl("reload", "openbao.service")
+    openbao.mark_applied(record)
+else:
+    print("OpenBao configuration is unchanged", file=sys.stderr)
+
+# Email notifications through the cluster smarthost
+if openbao.notify_recipients(openbao.read_environment()):
+    systemctl("enable", "--now", "openbao-notify.timer")
+else:
+    systemctl("disable", "--now", "openbao-notify.timer")

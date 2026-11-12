@@ -2,6 +2,7 @@
 
 #
 # Copyright (C) 2023 Nethesis S.r.l.
+# Copyright (C) 2026 Genius Dynamics
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 
@@ -14,6 +15,9 @@ images=()
 repobase="${REPOBASE:-ghcr.io/geniusdynamics}"
 # Configure the image name
 reponame="openbao"
+# Node.js 25+ no longer ships Corepack, install it from npm
+# renovate: datasource=npm packageName=corepack
+corepack_version=0.36.0
 
 # Create a new empty container image
 container=$(buildah from scratch)
@@ -21,7 +25,8 @@ container=$(buildah from scratch)
 # Reuse existing nodebuilder-openbao container, to speed up builds
 if ! buildah containers --format "{{.ContainerName}}" | grep -q nodebuilder-openbao; then
     echo "Pulling NodeJS runtime..."
-    buildah from --name nodebuilder-openbao -v "${PWD}:/usr/src:Z" docker.io/library/node:lts
+    buildah from --name nodebuilder-openbao -v "${PWD}:/usr/src:Z" docker.io/library/node:26.13.0-slim
+    buildah run nodebuilder-openbao sh -c "npm install -g corepack@${corepack_version} && corepack enable"
 fi
 
 echo "Build static UI files with node..."
@@ -34,17 +39,18 @@ buildah run \
 # Add imageroot directory to the container image
 buildah add "${container}" imageroot /imageroot
 buildah add "${container}" ui/dist /ui
-# Setup the entrypoint, ask to reserve one TCP port with the label and set a rootless container
-# Select you image(s) with the label org.nethserver.images
-# ghcr.io/xxxxx is the GitHub container registry or your own registry or docker.io for Docker Hub
-# The image tag is set to latest by default, but can be overridden with the IMAGETAG environment variable
-# --label="org.nethserver.images=docker.io/mariadb:10.11.5 docker.io/roundcube/roundcubemail:1.6.4-apache"
-# rootfull=0 === rootless container
-# tcp-ports-demand=1 number of tcp Port to reserve , 1 is the minimum, can be udp or tcp
+# - routeadm on the node Traefik: publish the OpenBao API and web UI
+# - accountconsumer: bind a user domain for OpenBao directory login
+# - two TCP ports: the OpenBao API listener, bound to 127.0.0.1, and the
+#   Prometheus metrics listener, bound to the node cluster VPN address
+# - rootless module
+# - pinned OpenBao image: Renovate tracks the org.nethserver.images label
+# - core 3.13+ provides agent.set_route() and agent.get_route()
 buildah config --entrypoint=/ \
     --label="org.nethserver.authorizations=traefik@node:routeadm cluster:accountconsumer" \
-    --label="org.nethserver.tcp-ports-demand=1" \
+    --label="org.nethserver.tcp-ports-demand=2" \
     --label="org.nethserver.rootfull=0" \
+    --label="org.nethserver.min-core=3.13.0" \
     --label="org.nethserver.images=docker.io/openbao/openbao:2.7.2" \
     "${container}"
 # Commit the image

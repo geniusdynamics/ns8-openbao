@@ -1,19 +1,41 @@
 # ns8-openbao
 
-This is a template module for [NethServer 8](https://github.com/nethserver/ns8-core).
-To start a new module from it:
+[OpenBao](https://openbao.org/) for [NethServer 8](https://github.com/NethServer/ns8-core).
+OpenBao is an open source, community-driven fork of HashiCorp Vault: it
+stores and controls access to tokens, passwords, certificates and
+encryption keys, and provides PKI, dynamic secrets and encryption as a
+service.
 
-## Table of Contents
+The module runs OpenBao as a rootless container with:
+
+- **Raft integrated storage** in the `openbao-data` volume
+- the API and web UI published by Traefik on a dedicated host name, with
+  optional Let's Encrypt certificate
+- **manual (Shamir) or automatic (static key) unseal**
+- optional **audit log** to the systemd journal
+- **directory login** with a NethServer user domain (OpenLDAP or Active
+  Directory), optionally configured automatically at initialization
+- **email notifications** through the cluster SMTP smarthost, and
+  **alerts** in the NethServer metrics and alert system
+- backup, restore and clone support
+
+## Table of contents
 
 - [Install](#install)
 - [Configure](#configure)
+- [First-time setup](#first-time-setup)
+- [Unseal modes](#unseal-modes)
+- [Directory login (LDAP / Active Directory)](#directory-login-ldap--active-directory)
+- [Notifications and alerts](#notifications-and-alerts)
+- [Prometheus metrics](#prometheus-metrics)
+- [Get the configuration and state](#get-the-configuration-and-state)
+- [Backup and restore](#backup-and-restore)
 - [Update](#update)
-- [Get the Configuration](#get-the-configuration)
 - [Uninstall](#uninstall)
-- [Smarthost Setting Discovery](#smarthost-setting-discovery)
-- [Debug](#debug)
+- [Security notes](#security-notes)
+- [Troubleshooting](#troubleshooting)
 - [Testing](#testing)
-- [UI Translation](#ui-translation)
+- [UI translation](#ui-translation)
 
 ## Install
 
@@ -23,47 +45,369 @@ Instantiate the module with:
 add-module ghcr.io/geniusdynamics/openbao:latest 1
 ```
 
-The output of the command will return the instance name.
-Output example:
+The output of the command returns the instance name. Output example:
 
 ```json
-{
-  "module_id": "openbao1",
-  "image_name": "openbao",
-  "image_url": "ghcr.io/geniusdynamics/openbao:latest"
-}
+{"module_id": "openbao1", "image_name": "openbao", "image_url": "ghcr.io/geniusdynamics/openbao:latest"}
 ```
 
 ## Configure
 
-Let's assume that the openbao instance is named `openbao1`.
+Let's assume that the OpenBao instance is named `openbao1`. Configure it
+from the *Settings* page of the application, or with `configure-module`:
 
-Launch `configure-module`, by setting the following parameters:
-
-- `host`: a fully qualified domain name for the application
-- `http2https`: enable or disable HTTP to HTTPS redirection (true/false)
-- `lets_encrypt`: enable or disable Let's Encrypt certificate (true/false)
-
-Example:
-
-```
+```bash
 api-cli run configure-module --agent module/openbao1 --data - <<EOF
 {
-  "host": "openbao.domain.com",
+  "host": "vault.example.org",
   "http2https": true,
-  "lets_encrypt": false
+  "lets_encrypt": true,
+  "unseal_mode": "manual",
+  "log_level": "info",
+  "audit_log": true,
+  "user_domain": "ad.example.org",
+  "ldap_admin_group": "Domain Admins",
+  "auto_initialize": false,
+  "notify_recipients": ["security@example.org"]
 }
 EOF
 ```
 
-The above command will:
+Parameters:
 
-- start and configure the openbao instance
-- configure a virtual host for Traefik to access the instance
+- `host` (required): fully qualified host name of the OpenBao API and web UI
+- `http2https`: redirect HTTP to HTTPS. Default `true`
+- `lets_encrypt`: request a Let's Encrypt certificate for `host`
+- `unseal_mode`: `manual` or `auto`, see [Unseal modes](#unseal-modes).
+  Default `manual`. It can be changed only before OpenBao is initialized
+- `log_level`: `trace`, `debug`, `info`, `warn` or `error`. Default `info`
+- `audit_log`: send the OpenBao audit log to the systemd journal. Default `false`
+- `user_domain`: NethServer user domain for directory login; `""` disables
+  it. See [Directory login](#directory-login-ldap--active-directory)
+- `ldap_admin_group`: group of `user_domain` whose members get full access
+  to OpenBao. Required with `user_domain`; it must exist in the domain
+- `auto_initialize`: with `unseal_mode` `auto` and a `user_domain`, let
+  OpenBao initialize itself with directory login already configured
+- `notify_recipients`: email addresses notified when OpenBao is down or
+  sealed. `[]` disables them. See [Notifications](#notifications-and-alerts)
+
+Omitted optional parameters keep their current value.
+
+The command starts OpenBao and configures the Traefik route. Clients reach
+the API at `https://vault.example.org` (for example
+`export BAO_ADDR=https://vault.example.org`) and the web UI at
+`https://vault.example.org/ui/`.
+
+Changing `log_level` or `audit_log` reloads OpenBao in place. Changing
+`host` or `unseal_mode` restarts it: with manual unseal it must be
+unsealed again.
+
+## First-time setup
+
+A new instance starts **uninitialized**: OpenBao has no data, no keys and
+no users yet. *Initializing* it creates the encryption keys and the first
+credentials. Which credentials you get, and where they appear, depends on
+two settings chosen in *Settings* **before** initializing: the unseal mode
+and directory login.
+
+### Words used below
+
+- **Root token**: a token with unlimited power, like the root password of
+  OpenBao. Use it for the first configuration only, then revoke it.
+- **Unseal keys** (manual unseal only): the master key split into shares,
+  for example 5 shares of which any 3 unlock OpenBao. They are needed
+  after **every** restart, update or reboot.
+- **Recovery keys** (automatic unseal only): shares that never unseal
+  OpenBao, but authorize sensitive operations such as generating a new root
+  token when no administrator can log in.
+
+OpenBao shows the root token and keys **only once** and cannot recover
+them. The module never sees or stores them: NethServer keeps action
+inputs and outputs in Redis, readable by other modules, so they are
+handled only by the OpenBao web UI or CLI, over HTTPS.
+
+### Setup wizard
+
+The easiest way: open the application. While OpenBao is not configured,
+the *Status* page starts the **setup wizard**, which asks for the web
+address, the unseal mode (explaining the trade-offs), directory login and
+email notifications, shows a summary, applies everything at once, and
+ends with the exact next steps for the setup you chose (one of A-D
+below), with buttons to open OpenBao or its LDAP login. It can be run
+again at any time with the *Setup wizard* button of the *Status* page.
+Advanced users can cancel it and use the *Settings* page, which has every
+option.
+
+### Choose your setup
+
+| Setup | Unseal mode | Directory login | First credentials |
+|---|---|---|---|
+| [A](#a-manual-unseal-without-directory-login) | manual | no | unseal keys + root token |
+| [B](#b-automatic-unseal-without-directory-login) | automatic | no | recovery keys + root token |
+| [C](#c-automatic-unseal-with-automatic-directory-login) | automatic | yes, `auto_initialize` | none: domain admins log in |
+| [D](#d-adding-directory-login-later) | any | yes, after initialization | root token of A or B |
+
+Start in every case from the setup wizard, or from the *Settings* page:
+set the host name, choose the unseal mode and, for C, the user domain and
+the administrators group. Then follow the steps below.
+
+### A. Manual unseal, without directory login
+
+1. On the *Status* page click **Open OpenBao**. The web UI shows the
+   initialization page.
+2. Choose the number of key shares and the threshold (for example 5 and
+   3) and initialize.
+3. **Download the keys** (JSON file) or copy the root token and every
+   unseal key. Hand the key shares to different trusted people; do not
+   keep them together with the root token.
+4. Continue to unseal: enter key shares until the threshold is reached.
+5. Sign in with the **Token** method, using the root token.
+6. Create real administrator access, for example a `userpass` user with
+   an admin policy, or set up [directory login](#d-adding-directory-login-later).
+7. Revoke the root token: `bao token revoke -self`.
+
+The same with the CLI, from any computer with the `bao` client:
+
+```bash
+export BAO_ADDR=https://vault.example.org
+bao operator init -key-shares=5 -key-threshold=3   # prints 5 unseal keys and the root token
+bao operator unseal                                # repeat 3 times, one key each time
+bao login                                          # paste the root token
+```
+
+**After every restart** (update, reboot, settings change of host name)
+OpenBao is sealed again. The *Status* page shows *Sealed* with the
+progress, and notifications are sent if configured. Open the web UI and
+enter the threshold number of unseal keys, or run `bao operator unseal`.
+
+### B. Automatic unseal, without directory login
+
+1. On the *Status* page click **Open OpenBao** and initialize. There is no
+   unseal step: OpenBao unseals itself with the key stored on the node.
+2. Save the **root token** and the **recovery keys**.
+3. Sign in with the root token, create administrator access (as in step 6
+   of A) and revoke the root token.
+
+CLI: `bao operator init -recovery-shares=5 -recovery-threshold=3`, then
+`bao login`.
+
+### C. Automatic unseal with automatic directory login
+
+In *Settings* choose **Automatic unseal**, a **user domain**, an
+**administrators group** and check **Initialize OpenBao automatically
+with directory login**. On save:
+
+1. OpenBao initializes itself at once. It enables LDAP login on the user
+   domain, grants the `ns8-admin` policy (full access) to the
+   administrators group and creates a `secret/` key/value store.
+2. No root token and no recovery keys exist. The *Status* page shows
+   *Unsealed*.
+3. Click **Log in with directory account** on the *Status* page: the web
+   UI opens with the LDAP method selected. Log in with the user name and
+   password of a member of the administrators group.
+4. Generate recovery keys and store them safely: without them a new root
+   token can never be generated if directory login breaks.
+
+   ```bash
+   export BAO_ADDR=https://vault.example.org
+   bao login -method=ldap username=alice
+   bao operator rotate-keys -init -key-shares=5 -key-threshold=3 -target=recovery
+   ```
+
+### D. Adding directory login later
+
+For an instance initialized with A or B, or when the user domain or group
+changes later:
+
+1. In *Settings* choose the user domain and the administrators group, and
+   save.
+2. On the node, run the command shown in *Settings* and paste a token
+   with administrator rights (the root token works):
+
+   ```bash
+   runagent -m openbao1 openbao-setup-ldap
+   ```
+
+3. Members of the administrators group can now use **Log in with
+   directory account**. You can revoke the root token.
+
+### Lost credentials
+
+- **Root token lost**: generate a new one with the unseal keys (A) or the
+  recovery keys (B, or C after step 4):
+
+  ```bash
+  bao operator generate-root -init            # prints a nonce and an OTP
+  bao operator generate-root                  # repeat with each key share
+  bao operator generate-root -decode=<encoded token> -otp=<OTP>
+  ```
+
+- **Unseal keys lost** (manual unseal): if fewer than the threshold remain,
+  the data cannot be decrypted by anybody. Keep copies in separate safe
+  places.
+- **Directory login broken and no recovery keys** (C without step 4): no
+  new administrator access can be created. Restore a backup or
+  reinitialize.
+
+## Unseal modes
+
+| | `manual` (default) | `auto` |
+|---|---|---|
+| Seal | Shamir key shares | `static` seal with a 32-byte key |
+| After restart, update or reboot | sealed: an operator enters the unseal keys | unseals itself |
+| Key storage | keys held by operators only | key generated on the node, `state/openbao-seal.key` (mode 0600), included in backups |
+| Backup consistency | live copy of the Raft storage | OpenBao stopped for a few seconds for a consistent copy |
+| Protection against disk or backup theft | yes | no: whoever holds the key file and the data can decrypt the secrets |
+
+Choose `manual` when the stored secrets are sensitive enough to justify
+an operator unsealing OpenBao after every restart. Choose `auto` when
+availability matters more and the node disk and backup repository are
+trusted.
+
+The seal type is written into the storage at initialization time, so
+`unseal_mode` is locked once OpenBao is initialized. Switching later
+requires an OpenBao [seal migration](https://openbao.org/docs/concepts/seal/#seal-migration),
+which is not automated by the module.
+
+**Never delete or replace `state/openbao-seal.key`** of an instance using
+automatic unseal: without it the data cannot be decrypted.
+
+## Directory login (LDAP / Active Directory)
+
+Choose a user domain of the cluster (internal OpenLDAP or Samba Active
+Directory, or an external LDAP/AD domain) and an administrators group in
+*Settings*. The module binds the domain, so it appears in the cluster
+*Domains and users* page. OpenBao is then configured with:
+
+- the `ldap` auth method, connected to the node ldapproxy: it relays to
+  the domain servers with TLS and fails over between them. User and group
+  searches mirror the NethServer core: `sAMAccountName`/`member` for Active
+  Directory, `uid`/`posixGroup` `memberUid` for OpenLDAP
+- the `ns8-admin` policy, with full access, mapped to the administrators
+  group
+
+Users log in with their domain account:
+
+```bash
+bao login -method=ldap username=alice
+```
+
+or with the **Log in with directory account** button of the *Status*
+page, which opens the web UI with the LDAP method selected
+(`https://<host>/ui/vault/auth?with=ldap%2F`). Create further policies and
+map other groups with `auth/ldap/groups/<group>`.
+
+How OpenBao gets this configuration depends on its state, see
+[First-time setup](#first-time-setup):
+
+- **Automatic initialization** ([setup C](#c-automatic-unseal-with-automatic-directory-login)):
+  requires automatic unseal and an uninitialized server. The module checks
+  that the group exists before saving, because a wrong group would leave a
+  self-initialized OpenBao without administrators.
+- **`openbao-setup-ldap`** ([setup D](#d-adding-directory-login-later)):
+  for an initialized server, or with manual unseal. The module cannot
+  change OpenBao without an administrator token, and tokens must never
+  pass through module actions: the command prompts for a token on the node
+  (or reads `BAO_TOKEN`), applies the configuration and forgets the token.
+
+OpenBao keeps its own copy of the LDAP connection settings. If the domain
+bind credentials or servers change, the module logs a warning, sends a
+notification and asks to run `openbao-setup-ldap` again.
+
+## Notifications and alerts
+
+OpenBao itself does not send email. The module adds two notification
+paths, both through the cluster SMTP smarthost (configured in the cluster
+*Settings*, SMTP smarthost page):
+
+- **Application recipients** (`notify_recipients`): every 5 minutes
+  `openbao-notify.timer` checks OpenBao and sends one email when it is
+  down or sealed for two checks in a row, and one when it recovers. A short
+  planned stop, like the backup copy with automatic unseal, does not
+  notify. Use *Send test email* in *Settings*, or the `send-test-email`
+  action, to verify delivery.
+- **Cluster alerts**: the module exports `openbao_up`, `openbao_initialized`,
+  `openbao_sealed`, `openbao_build_info` and `openbao_auto_unseal`
+  metrics (core 3.24 or later) and publishes alert rules to the NethServer
+  metrics module: `OpenbaoDown` and `OpenbaoSealed` (critical, after 10
+  minutes) and `OpenbaoNotInitialized` (warning, after 24 hours). They
+  appear in the cluster alert list and are mailed to the cluster alert
+  recipients.
+
+## Prometheus metrics
+
+OpenBao [telemetry](https://openbao.org/docs/configuration/telemetry/) is
+published for the NethServer **Metrics** module (Prometheus and Grafana),
+which can run on any node of the cluster:
+
+- a second OpenBao listener serves only `/v1/sys/metrics`, without
+  authentication. It is published on the second TCP port of the module,
+  bound to the node cluster VPN address (for example `10.5.4.1`): it is
+  reachable by the cluster nodes only, never through Traefik. The public
+  listener refuses metrics requests
+- `configure-module` publishes the scrape target in
+  `module/<module_id>/metrics_targets`, with the `/v1/sys/metrics` path and
+  the `format=prometheus` parameter, and emits `metrics-target-changed`.
+  If the node VPN address changes, the target and the listener follow it
+- metric names keep the OpenBao default `vault_` prefix, for example
+  `vault_core_unsealed`, `vault_core_handle_request_count` or
+  `vault_token_count`, so dashboards made for Vault work as they are. They
+  carry the `module_id="openbao1"` label added by the Metrics module
+
+Query them from Grafana (enable it in the Metrics module settings), or test
+the endpoint from a cluster node:
+
+```bash
+curl "http://10.5.4.1:<second port>/v1/sys/metrics?format=prometheus"
+```
+
+The second port is in the module `TCP_PORTS` environment variable
+(`runagent -m openbao1 printenv TCP_PORTS`). Metrics are served only while
+OpenBao is initialized and unsealed; the module own `openbao_up`,
+`openbao_sealed` and `openbao_initialized` metrics cover the other states.
+
+## Get the configuration and state
+
+```bash
+api-cli run get-configuration --agent module/openbao1
+api-cli run get-openbao-status --agent module/openbao1
+```
+
+`get-openbao-status` returns whether the service is running, and whether
+OpenBao is initialized and sealed, with the unseal progress, the version
+and the web UI URL.
+
+## Backup and restore
+
+Configure a backup of the instance from the cluster *Backup* page. The
+backup contains:
+
+- `volumes/openbao-data`: the Raft storage, encrypted by OpenBao
+- `state/openbao-data.tar`: with automatic unseal only, a consistent copy
+  of the storage. To take it, `module-dump-state` stops OpenBao for a few
+  seconds and starts it again; it unseals itself
+- `state/openbao-seal.key`: the static unseal key, with automatic unseal
+
+With manual unseal OpenBao cannot be stopped during the backup (it would
+stay sealed), so the storage is copied while running. For guaranteed
+consistency, also schedule a Raft snapshot with a token allowed to read
+`sys/storage/raft/snapshot`:
+
+```bash
+bao operator raft snapshot save openbao-$(date +%F).snap
+```
+
+On restore, the instance comes back with the same data and seal. With
+manual unseal it must be unsealed with the **original** unseal keys. With
+automatic unseal it unseals itself. Let's Encrypt is not requested during
+restore or clone, because the host name may not point to the new node yet:
+enable it again from *Settings*.
+
+To recover from a snapshot instead, initialize a fresh instance and run
+`bao operator raft snapshot restore -force <file>`: OpenBao then needs the
+unseal keys of the cluster that produced the snapshot.
 
 ## Update
-
-To update the module to a new version:
 
 ```bash
 api-cli run update-module --data '{
@@ -73,127 +417,71 @@ api-cli run update-module --data '{
 }'
 ```
 
-## Get the Configuration
-
-You can retrieve the configuration with
-
-```
-api-cli run get-configuration --agent module/openbao1
-```
+An update restarts OpenBao: with manual unseal it must be unsealed again.
 
 ## Uninstall
-
-To uninstall the instance:
 
 ```bash
 remove-module --no-preserve openbao1
 ```
 
-## Smarthost setting discovery
+All the stored secrets are deleted, unless a backup exists.
 
-Some configuration settings, like the smarthost setup, are not part of the
-`configure-module` action input: they are discovered by looking at some
-Redis keys. To ensure the module is always up-to-date with the
-centralized [smarthost
-setup](https://geniusdynamics.github.io/ns8-core/core/smarthost/) every time
-openbao starts, the command `bin/discover-smarthost` runs and refreshes
-the `state/smarthost.env` file with fresh values from Redis.
+## Security notes
 
-Furthermore if smarthost setup is changed when openbao is already
-running, the event handler `events/smarthost-changed/10reload_services`
-restarts the main module service.
+- The OpenBao listener is bound to `127.0.0.1` on the node; TLS is
+  terminated by Traefik. Leave `http2https` enabled.
+- The container runs as the unprivileged `openbao` user, with all
+  capabilities dropped and `no-new-privileges`.
+- `disable_mlock = true`: memory locking is not available to rootless
+  containers and is not required with Raft storage. Make sure the node
+  swap, if any, is encrypted.
+- The Prometheus metrics listener has no authentication and is bound to
+  the cluster VPN address only. Metrics hold counters and timings, not
+  secrets.
+- The `X-Forwarded-For` header set by Traefik is trusted, so audit logs
+  record the real client address.
+- Enable the audit log in production. Audit entries are sent to the
+  journal: view them from the *System logs* page of the application.
+- Revoke the root token after the initial setup; generate a new one with
+  `bao operator generate-root` when needed.
 
-See also the `systemd/user/openbao.service` file.
+## Troubleshooting
 
-This setting discovery is just an example to understand how the module is
-expected to work: it can be rewritten or discarded completely.
+Inspect the module environment and the generated configuration:
 
-## Debug
+```bash
+runagent -m openbao1 env | grep -E 'OPENBAO|TRAEFIK|TCP_PORT'
+runagent -m openbao1 cat openbao-config/openbao.hcl
+```
 
-Some CLIs are needed to debug:
+Check the service and its logs:
 
-- The module runs under an agent that initiates a lot of environment variables (in `/home/openbao1/.config/state`). It could be nice to verify them on the root terminal:
+```bash
+runagent -m openbao1 systemctl --user status openbao.service
+runagent -m openbao1 podman logs --tail 100 openbao   # or the System logs page
+```
 
-  ```bash
-  runagent -m openbao1 env
-  ```
+Use the OpenBao CLI inside the container:
 
-- You can become runagent for testing scripts and initiate all environment variables:
+```bash
+runagent -m openbao1 podman exec -ti openbao sh -c 'BAO_ADDR=http://127.0.0.1:8200 bao status'
+```
 
-  ```bash
-  runagent -m openbao1
-  ```
-
-  The path becomes:
-
-  ```bash
-  echo $PATH
-  /home/openbao1/.config/bin:/usr/local/agent/pyenv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/usr/
-  ```
-
-- If you want to debug a container or see environment inside:
-
-  ```bash
-  runagent -m openbao1
-  podman ps
-  ```
-
-  Example output:
-
-  ```
-  CONTAINER ID  IMAGE                                      COMMAND               CREATED        STATUS        PORTS                    NAMES
-  d292c6ff28e9  localhost/podman-pause:4.6.1-1702418000                          9 minutes ago  Up 9 minutes  127.0.0.1:20015->80/tcp  80b8de25945f-infra
-  d8df02bf6f4a  docker.io/library/mariadb:10.11.5          --character-set-s...  9 minutes ago  Up 9 minutes  127.0.0.1:20015->80/tcp  mariadb-app
-  9e58e5bd676f  docker.io/library/nginx:stable-alpine3.17  nginx -g daemon o...  9 minutes ago  Up 9 minutes  127.0.0.1:20015->80/tcp  openbao-app
-  ```
-
-  You can see what environment variables are inside the container:
-
-  ```bash
-  podman exec openbao-app env
-  ```
-
-  Example output:
-
-  ```
-  PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-  TERM=xterm
-  PKG_RELEASE=1
-  MARIADB_DB_HOST=127.0.0.1
-  MARIADB_DB_NAME=openbao
-  MARIADB_IMAGE=docker.io/mariadb:10.11.5
-  MARIADB_DB_TYPE=mysql
-  container=podman
-  NGINX_VERSION=1.24.0
-  NJS_VERSION=0.7.12
-  MARIADB_DB_USER=openbao
-  MARIADB_DB_PASSWORD=openbao
-  MARIADB_DB_PORT=3306
-  HOME=/root
-  ```
-
-  You can run a shell inside the container:
-
-  ```bash
-  podman exec -ti openbao-app sh
-  / #
-  ```
+The configuration in `openbao-config/openbao.hcl` is regenerated from the
+module environment at every start: do not edit it by hand.
 
 ## Testing
 
-Test the module using the `test-module.sh` script:
+The tests are written with [Robot Framework](https://robotframework.org/)
+and run by the *Test module* GitHub workflow on a QEMU virtual machine.
+To run them against an existing NethServer 8 leader node:
 
 ```bash
-./test-module.sh <NODE_ADDR> ghcr.io/geniusdynamics/openbao:latest
+robot -v NODE_ADDR:<node address> -v IMAGE_URL:ghcr.io/geniusdynamics/openbao:<tag> -v SSH_KEYFILE:<private key> --exclude ui tests/
 ```
 
-The tests are made using [Robot Framework](https://robotframework.org/).
+## UI translation
 
-## UI Translation
-
-Translated with [Weblate](https://hosted.weblate.org/projects/ns8/).
-
-To set up the translation process:
-
-- Add [GitHub Weblate app](https://docs.weblate.org/en/latest/admin/continuous.html#github-setup) to your repository
-- Add your repository to [hosted.weblate.org](https://hosted.weblate.org) or ask a Genius Dynamics developer to add it to the ns8 Weblate project
+Only `ui/public/i18n/en/translation.json` is edited in this repository.
+Other languages are translated with [Weblate](https://hosted.weblate.org/projects/ns8/).
