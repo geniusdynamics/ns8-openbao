@@ -12,4 +12,8 @@
 
 exec 1>&2
 
+# A new module release may pin new versions of the enabled plugins: pull
+# them now, OpenBao never downloads at startup
+python3 -c 'import openbao; openbao.pull_plugin_images(openbao.enabled_plugins(openbao.read_environment()))' || :
+
 systemctl --user try-restart openbao.service

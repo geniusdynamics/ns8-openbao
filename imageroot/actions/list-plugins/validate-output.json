@@ -1,0 +1,99 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "list-plugins output",
+    "$id": "http://schema.nethserver.org/openbao/list-plugins-output.json",
+    "description": "OpenBao plugins: the bundled LDAP auth plugin and the optional plugins of the openbao-plugins project, with their state",
+    "examples": [
+        {
+            "plugins": [
+                {
+                    "id": "auth-github",
+                    "type": "auth",
+                    "name": "github",
+                    "bundled": false,
+                    "enabled": true,
+                    "installed": true,
+                    "version": "v0.0.2",
+                    "installed_version": "v0.0.2",
+                    "docs_url": "https://github.com/openbao/openbao-plugins/tree/main/auth/github",
+                    "enable_command": "bao auth enable github",
+                    "setup_commands": [
+                        "bao write auth/github/config organization=<organization>"
+                    ]
+                }
+            ]
+        }
+    ],
+    "type": "object",
+    "required": [
+        "plugins"
+    ],
+    "properties": {
+        "plugins": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "type",
+                    "name",
+                    "bundled",
+                    "enabled",
+                    "installed",
+                    "version",
+                    "installed_version",
+                    "docs_url",
+                    "enable_command",
+                    "setup_commands"
+                ],
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    },
+                    "type": {
+                        "type": "string",
+                        "enum": [
+                            "auth",
+                            "secret",
+                            "database"
+                        ]
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Name registered in OpenBao"
+                    },
+                    "bundled": {
+                        "type": "boolean",
+                        "description": "Always installed with the module (LDAP)"
+                    },
+                    "enabled": {
+                        "type": "boolean"
+                    },
+                    "installed": {
+                        "type": "boolean",
+                        "description": "The binary is installed and declared in the server configuration"
+                    },
+                    "version": {
+                        "type": "string",
+                        "description": "Version pinned by this module release"
+                    },
+                    "installed_version": {
+                        "type": "string"
+                    },
+                    "docs_url": {
+                        "type": "string"
+                    },
+                    "enable_command": {
+                        "type": "string"
+                    },
+                    "setup_commands": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -134,7 +134,7 @@ if user_domain:
             print(agent.SD_WARNING + f"Cannot verify group {mapping['group']}: {ex}", file=sys.stderr)
 
 if request.get("auto_initialize", False):
-    if not openbao.ldap_plugin_available() and not openbao.install_plugins().get("ldap"):
+    if not openbao.ldap_plugin_available() and not openbao.install_plugins().get("auth-ldap"):
         fail("auto_initialize", True, "ldap_plugin_missing")
     elif requested_mode not in ("auto", "transit"):
         fail("auto_initialize", True, "auto_initialize_requires_auto_unseal")

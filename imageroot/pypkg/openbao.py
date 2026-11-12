@@ -70,6 +70,7 @@ DEFAULTS = {
     "OPENBAO_HA_JOIN_ADDRS": "",
     "OPENBAO_RAFT_NODE_ID": "",
     "OPENBAO_RAFT_RECOVER": "False",
+    "OPENBAO_PLUGINS": "",
 }
 
 # High availability (experimental): "standalone" is a single-node Raft
@@ -166,12 +167,225 @@ BREAKGLASS_TOKEN_TTL = "768h"
 # PLUGIN_DIR by install_plugins() and declared in the server configuration.
 PLUGINS = [
     {
-        "name": "ldap",
+        "id": "auth-ldap",
         "type": "auth",
+        "name": "ldap",
         "image_var": "OPENBAO_PLUGIN_AUTH_LDAP_IMAGE",
         "command": "openbao-plugin-auth-ldap",
     },
 ]
+# Optional plugins of the openbao-plugins project (Plugins page). None is
+# downloaded until it is enabled (OPENBAO_PLUGINS): then the module pulls
+# the image pinned by digest, copies and verifies the binary, and declares
+# it. They are NOT in org.nethserver.images, which every instance pulls.
+# The OpenBao process never writes PLUGIN_DIR: it is mounted read-only.
+# "name" is the name registered in OpenBao: auth methods and secrets
+# engines are enabled with it, a database plugin is the plugin_name of a
+# database connection.
+PLUGIN_CATALOG = [
+    {
+        "id": "auth-aws",
+        "type": "auth",
+        "name": "aws",
+        "image": "ghcr.io/openbao/openbao-plugin-auth-aws:v0.1.2@sha256:bd17aee90584851f427cbed1d4effa91ea53ce713c9b9d8568620328d843d919",
+        "command": "openbao-plugin-auth-aws",
+    },
+    {
+        "id": "auth-azure",
+        "type": "auth",
+        "name": "azure",
+        "image": "ghcr.io/openbao/openbao-plugin-auth-azure:v0.23.1@sha256:0dbd2186d3ad2e7b270ec939de95caed0bf376f8baa44636572bb5f304508033",
+        "command": "openbao-plugin-auth-azure",
+    },
+    {
+        "id": "auth-gcp",
+        "type": "auth",
+        "name": "gcp",
+        "image": "ghcr.io/openbao/openbao-plugin-auth-gcp:v0.22.1@sha256:098e03a560fe91d25617825a480144e9ba6d2ebd6e85e4b4a262b8121d3ed141",
+        "command": "openbao-plugin-auth-gcp",
+    },
+    {
+        "id": "auth-github",
+        "type": "auth",
+        "name": "github",
+        "image": "ghcr.io/openbao/openbao-plugin-auth-github:v0.0.2@sha256:386c8087ba7740ee1047e5c1cc1f4bb89389a39654be03ada24692cde4f99afd",
+        "command": "openbao-plugin-auth-github",
+    },
+    {
+        "id": "auth-kerberos",
+        "type": "auth",
+        "name": "kerberos",
+        "image": "ghcr.io/openbao/openbao-plugin-auth-kerberos:v0.1.0@sha256:7c3077e0281e8883fb669e41dfae869ed971869d11b8a115008a50aeef3311b9",
+        "command": "openbao-plugin-auth-kerberos",
+    },
+    {
+        "id": "auth-radius",
+        "type": "auth",
+        "name": "radius",
+        "image": "ghcr.io/openbao/openbao-plugin-auth-radius:v0.2.0@sha256:047657dd7458ee1b13d2a1b9ec9b55f214e818c027ee4fbecefed9278c94d707",
+        "command": "openbao-plugin-auth-radius",
+    },
+    {
+        "id": "secrets-aws",
+        "type": "secret",
+        "name": "aws",
+        "image": "ghcr.io/openbao/openbao-plugin-secrets-aws:v0.3.3@sha256:d930da29a004415c489c4d242a1985d211ca8b507887e35aa097719d95f6e574",
+        "command": "openbao-plugin-secrets-aws",
+    },
+    {
+        "id": "secrets-azure",
+        "type": "secret",
+        "name": "azure",
+        "image": "ghcr.io/openbao/openbao-plugin-secrets-azure:v0.23.1@sha256:f844e875e6b53fa44158501d46c8669f38e5c4340a2333ef1a68f7e8ebcf7f92",
+        "command": "openbao-plugin-secrets-azure",
+    },
+    {
+        "id": "secrets-gcp",
+        "type": "secret",
+        "name": "gcp",
+        "image": "ghcr.io/openbao/openbao-plugin-secrets-gcp:v0.23.2@sha256:df3bf223cddd11abd71e8f6da1504b907672871a748d35ead794b0dfd31674e1",
+        "command": "openbao-plugin-secrets-gcp",
+    },
+    {
+        "id": "secrets-gcpkms",
+        "type": "secret",
+        "name": "gcpkms",
+        "image": "ghcr.io/openbao/openbao-plugin-secrets-gcpkms:v0.21.1@sha256:7dc49dd1333a6962e00c417fc11340d44187d7907ea4a5a53d7233760ac3f1bf",
+        "command": "openbao-plugin-secrets-gcpkms",
+    },
+    {
+        "id": "secrets-consul",
+        "type": "secret",
+        "name": "consul",
+        "image": "ghcr.io/openbao/openbao-plugin-secrets-consul:v0.1.2@sha256:558945fd2740814a45a3014abe211bc32b309044fd32d58388b588db46933b31",
+        "command": "openbao-plugin-secrets-consul",
+    },
+    {
+        "id": "secrets-nomad",
+        "type": "secret",
+        "name": "nomad",
+        "image": "ghcr.io/openbao/openbao-plugin-secrets-nomad:v0.1.7@sha256:e6ba85c7f2c4d1035c397d7db0b5d9ea2907c7381479c0a3ab5f5bd0b6673446",
+        "command": "openbao-plugin-secrets-nomad",
+    },
+    {
+        "id": "secrets-ldap",
+        "type": "secret",
+        "name": "ldap",
+        "image": "ghcr.io/openbao/openbao-plugin-secrets-ldap:v0.1.1@sha256:1c9bca950ea399cded489820aff334321d086b9d456fe42801587873d0c0b5c4",
+        "command": "openbao-plugin-secrets-ldap",
+    },
+    {
+        "id": "database-mongodb",
+        "type": "database",
+        "name": "mongodb-database-plugin",
+        "image": "ghcr.io/openbao/openbao-plugin-database-mongodb:v0.0.2@sha256:ed76f5811116edc4790d14a926322ea8b6e265d9ce3a1b0dad0bf6af898685ab",
+        "command": "openbao-plugin-database-mongodb",
+    },
+]
+# First steps shown by the Plugins page and docs/plugins.md, run by an
+# administrator with the bao CLI. Placeholders in <angle brackets>.
+PLUGIN_DOCS_BASE = "https://github.com/openbao/openbao-plugins/tree/main/"
+PLUGIN_GUIDES = {
+    "auth-aws": ("auth/aws", [
+        "bao write auth/aws/config/client access_key=<access key> secret_key=<secret key>",
+        "bao write auth/aws/role/<role> auth_type=iam bound_iam_principal_arn=<IAM ARN> policies=ns8-secrets-ro",
+    ]),
+    "auth-azure": ("auth/azure", [
+        "bao write auth/azure/config tenant_id=<tenant ID> resource=https://management.azure.com/",
+        "bao write auth/azure/role/<role> bound_subscription_ids=<subscription ID> policies=ns8-secrets-ro",
+    ]),
+    "auth-gcp": ("auth/gcp", [
+        "bao write auth/gcp/config credentials=@<service-account>.json",
+        "bao write auth/gcp/role/<role> type=iam bound_service_accounts=<service account e-mail> policies=ns8-secrets-ro",
+    ]),
+    "auth-github": ("auth/github", [
+        "bao write auth/github/config organization=<organization>",
+        "bao write auth/github/map/teams/<team> value=ns8-secrets-rw",
+    ]),
+    "auth-kerberos": ("auth/kerberos", [
+        "bao write auth/kerberos/config keytab=@<keytab, base64> service_account=<service account>",
+        "bao write auth/kerberos/config/ldap url=ldaps://<directory server> userdn=<users DN> groupdn=<groups DN>",
+    ]),
+    "auth-radius": ("auth/radius", [
+        "bao write auth/radius/config host=<RADIUS server> secret=<shared secret>",
+        "bao write auth/radius/users/<user> policies=ns8-secrets-ro",
+    ]),
+    "secrets-aws": ("secrets/aws", [
+        "bao write aws/config/root access_key=<access key> secret_key=<secret key> region=<region>",
+        "bao write aws/roles/<role> credential_type=iam_user policy_arns=<policy ARN>",
+        "bao read aws/creds/<role>",
+    ]),
+    "secrets-azure": ("secrets/azure", [
+        "bao write azure/config subscription_id=<subscription ID> tenant_id=<tenant ID> client_id=<client ID> client_secret=<client secret>",
+        "bao write azure/roles/<role> azure_roles=@<roles>.json ttl=1h",
+    ]),
+    "secrets-gcp": ("secrets/gcp", [
+        "bao write gcp/config credentials=@<service-account>.json",
+        "bao write gcp/roleset/<roleset> project=<project> secret_type=access_token token_scopes=https://www.googleapis.com/auth/cloud-platform bindings=@<bindings>.hcl",
+    ]),
+    "secrets-gcpkms": ("secrets/gcpkms", [
+        "bao write gcpkms/config credentials=@<service-account>.json",
+        "bao write gcpkms/keys/<key> key_ring=projects/<project>/locations/<location>/keyRings/<key ring> rotation_period=72h",
+    ]),
+    "secrets-consul": ("secrets/consul", [
+        "bao write consul/config/access address=<Consul host>:8500 token=<management token>",
+        "bao write consul/roles/<role> policies=<Consul policy>",
+    ]),
+    "secrets-nomad": ("secrets/nomad", [
+        "bao write nomad/config/access address=http://<Nomad host>:4646 token=<management token>",
+        "bao write nomad/role/<role> policies=<Nomad policy>",
+    ]),
+    "secrets-ldap": ("secrets/ldap", [
+        "bao write ldap/config binddn=<bind DN> bindpass=<bind password> url=ldaps://<directory server>",
+        "bao write ldap/static-role/<role> dn=<account DN> username=<account> rotation_period=24h",
+    ]),
+    "database-mongodb": ("database/mongodb", [
+        "bao secrets enable database",
+        "bao write database/config/<connection> plugin_name=mongodb-database-plugin allowed_roles=<role> "
+        "connection_url=\"mongodb://{{username}}:{{password}}@<host>:27017/admin\" username=<admin user> password=<admin password>",
+        "bao write database/roles/<role> db_name=<connection> "
+        "creation_statements='{ \"db\": \"admin\", \"roles\": [{ \"role\": \"readWrite\", \"db\": \"<database>\" }] }' default_ttl=1h",
+    ]),
+}
+
+
+def plugin_enable_command(entry):
+    """Return the bao command that enables a catalog plugin."""
+    if entry["type"] == "auth":
+        return f"bao auth enable {entry['name']}"
+    if entry["type"] == "secret":
+        return f"bao secrets enable {entry['name']}"
+    return "bao secrets enable database"
+
+
+def plugin_catalog_state():
+    """Return the catalog with the state of each plugin, for the Plugins page."""
+    env = read_environment()
+    enabled = set(enabled_plugins(env))
+    installed = declared_plugins()
+    items = []
+    for entry in PLUGINS + PLUGIN_CATALOG:
+        bundled = "image_var" in entry
+        record = installed.get(entry["id"])
+        doc_path, setup = PLUGIN_GUIDES.get(entry["id"], (entry["id"].replace("-", "/", 1), []))
+        image = (env.get(entry["image_var"]) or os.environ.get(entry["image_var"], "")) \
+            if bundled else entry["image"]
+        items.append({
+            "id": entry["id"],
+            "type": entry["type"],
+            "name": entry["name"],
+            "bundled": bundled,
+            "enabled": bundled or entry["id"] in enabled,
+            "installed": bool(record),
+            "version": _image_version(image),
+            "installed_version": record["version"] if record else "",
+            "docs_url": PLUGIN_DOCS_BASE + doc_path,
+            "enable_command": plugin_enable_command(entry) if not bundled else "",
+            "setup_commands": setup,
+        })
+    return items
+
+
 PLUGIN_CONTAINER_DIR = "/openbao/plugins"
 # Podman translates this address to the node loopback interface, where
 # the NS8 ldapproxy listens (slirp4netns allow_host_loopback=true)
@@ -308,36 +522,88 @@ def _read_plugin_state():
         return {}
 
 
+def enabled_plugins(env):
+    """Return the ids of the enabled catalog plugins, in catalog order."""
+    wanted = set(p for p in env.get("OPENBAO_PLUGINS", "").split(",") if p)
+    return [p["id"] for p in PLUGIN_CATALOG if p["id"] in wanted]
+
+
+def catalog_entry(plugin_id):
+    return next((p for p in PLUGIN_CATALOG if p["id"] == plugin_id), None)
+
+
+def _image_id(image):
+    proc = subprocess.run(["podman", "image", "inspect", "--format", "{{.Id}}", image],
+                          capture_output=True, text=True, check=False)
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def pull_plugin_images(plugin_ids):
+    """Pull the pinned images of catalog plugins that are not on the node.
+
+    Return {plugin_id: error message} for the images that could not be
+    pulled.
+    """
+    errors = {}
+    for plugin_id in plugin_ids:
+        entry = catalog_entry(plugin_id)
+        if not entry or _image_id(entry["image"]):
+            continue
+        log(f"Pulling plugin image {entry['image']}")
+        proc = subprocess.run(["podman", "pull", "--quiet", entry["image"]],
+                              capture_output=True, text=True, check=False)
+        if proc.returncode != 0:
+            output = (proc.stderr or proc.stdout).strip().splitlines()
+            errors[plugin_id] = output[-1] if output else "pull failed"
+            log(f"Plugin {plugin_id}: cannot pull {entry['image']}: {errors[plugin_id]}", "<3>")
+    return errors
+
+
+def remove_plugin_images(plugin_ids):
+    """Remove the images of catalog plugins that are no longer enabled."""
+    for plugin_id in plugin_ids:
+        entry = catalog_entry(plugin_id)
+        if entry:
+            subprocess.run(["podman", "image", "rm", "--ignore", entry["image"]],
+                           capture_output=True, check=False)
+
+
 def install_plugins():
     """Copy the external plugin binaries from their images into PLUGIN_DIR.
 
-    It runs before OpenBao starts. A binary is extracted again only when
-    its image changes. Return the dict of installed plugins.
+    It runs before OpenBao starts: the bundled plugins (LDAP) and the
+    enabled catalog plugins whose image is on the node. It never pulls
+    images. A binary is extracted again only when its image changes;
+    binaries of plugins no longer enabled are deleted. Return the dict of
+    installed plugins, keyed by plugin id.
     """
     env = read_environment()
     os.makedirs(PLUGIN_DIR, mode=0o755, exist_ok=True)
     os.chmod(PLUGIN_DIR, 0o755)
     state = _read_plugin_state()
-    installed = {}
+    wanted = []
     for plugin in PLUGINS:
-        image = env.get(plugin["image_var"]) or os.environ.get(plugin["image_var"], "")
+        wanted.append(dict(plugin, image=env.get(plugin["image_var"]) or os.environ.get(plugin["image_var"], "")))
+    for plugin_id in enabled_plugins(env):
+        wanted.append(catalog_entry(plugin_id))
+    installed = {}
+    for plugin in wanted:
+        image = plugin["image"]
         version = _image_version(image)
         if not image or not version:
-            log(f"Plugin {plugin['name']}: image not available", "<4>")
+            log(f"Plugin {plugin['id']}: image not available", "<4>")
             continue
-        proc = subprocess.run(["podman", "image", "inspect", "--format", "{{.Id}}", image],
-                              capture_output=True, text=True, check=False)
-        if proc.returncode != 0:
-            log(f"Plugin {plugin['name']}: image {image} is not present on this node", "<4>")
+        image_id = _image_id(image)
+        if not image_id:
+            log(f"Plugin {plugin['id']}: image {image} is not present on this node", "<4>")
             continue
-        image_id = proc.stdout.strip()
         target = os.path.join(PLUGIN_DIR, plugin["command"])
-        record = state.get(plugin["name"], {})
+        record = state.get(plugin["id"], {})
         if record.get("image_id") == image_id and os.path.exists(target) \
-                and _sha256_file(target) == record.get("sha256"):
-            installed[plugin["name"]] = record
+                and _sha256_file(target) == record.get("sha256") and record.get("name") == plugin["name"]:
+            installed[plugin["id"]] = record
             continue
-        container = f"openbao-plugin-{plugin['name']}-extract"
+        container = f"openbao-plugin-{plugin['id']}-extract"
         tmp_target = os.path.join(PLUGIN_DIR, f".{plugin['command']}.tmp")
         try:
             subprocess.run(["podman", "create", "--replace", "--name", container, image],
@@ -345,7 +611,7 @@ def install_plugins():
             subprocess.run(["podman", "cp", f"{container}:/{plugin['command']}", tmp_target],
                            check=True, capture_output=True, text=True)
         except subprocess.CalledProcessError as ex:
-            log(f"Plugin {plugin['name']}: cannot extract the binary: {ex.stderr.strip()}", "<3>")
+            log(f"Plugin {plugin['id']}: cannot extract the binary: {ex.stderr.strip()}", "<3>")
             continue
         finally:
             subprocess.run(["podman", "rm", "--force", "--ignore", container],
@@ -355,32 +621,42 @@ def install_plugins():
         os.replace(tmp_target, target)
         record = {
             "type": plugin["type"],
+            "name": plugin["name"],
             "command": plugin["command"],
             "version": version,
             "sha256": _sha256_file(target),
             "image_id": image_id,
         }
-        installed[plugin["name"]] = record
-        log(f"Plugin {plugin['name']} {version} installed")
+        installed[plugin["id"]] = record
+        log(f"Plugin {plugin['id']} {version} installed")
+    # Delete the binaries of plugins that are no longer installed
+    keep = {record["command"] for record in installed.values()}
+    for entry in PLUGINS + PLUGIN_CATALOG:
+        path = os.path.join(PLUGIN_DIR, entry["command"])
+        if entry["command"] not in keep and os.path.exists(path):
+            os.unlink(path)
+            log(f"Plugin {entry['id']} removed")
     _write_file(PLUGIN_STATE_FILE, json.dumps(installed, indent=2) + "\n", 0o644)
     return installed
 
 
 def declared_plugins():
-    """Return {name: record} of the installed plugins with a valid binary."""
+    """Return {plugin id: record} of the installed plugins with a valid binary."""
     plugins = {}
-    for name, record in _read_plugin_state().items():
+    for plugin_id, record in _read_plugin_state().items():
+        if "name" not in record:
+            continue  # state written by a previous release: reinstalled at start
         path = os.path.join(PLUGIN_DIR, record.get("command", ""))
         try:
             if _sha256_file(path) == record.get("sha256"):
-                plugins[name] = record
+                plugins[plugin_id] = record
         except OSError:
             continue
     return plugins
 
 
 def ldap_plugin_available():
-    return "ldap" in declared_plugins()
+    return "auth-ldap" in declared_plugins()
 
 
 def ensure_breakglass_token():
@@ -1014,9 +1290,9 @@ def render_config(env):
         # directory into an empty base, which turns the documented default
         # (true) into false when the value is omitted.
         static_part.append("plugin_auto_register = true")
-        for name in sorted(plugins):
-            record = plugins[name]
-            static_part.append(f"plugin {_hcl_string(record['type'])} {_hcl_string(name)} {{")
+        for plugin_id in sorted(plugins):
+            record = plugins[plugin_id]
+            static_part.append(f"plugin {_hcl_string(record['type'])} {_hcl_string(record['name'])} {{")
             static_part.append(f"  command   = {_hcl_string(record['command'])}")
             static_part.append(f"  version   = {_hcl_string(record['version'])}")
             static_part.append(f"  sha256sum = {_hcl_string(record['sha256'])}")
@@ -1053,7 +1329,7 @@ def render_config(env):
         params = discover_ldap(env["OPENBAO_USER_DOMAIN"])
         if not params:
             log("Self-initialization skipped: the user domain is not available", "<4>")
-        elif "ldap" not in plugins:
+        elif "auth-ldap" not in plugins:
             log("Self-initialization skipped: the LDAP auth plugin is not installed", "<4>")
         else:
             init_text = render_initialize(params, env)

@@ -67,6 +67,9 @@ result = {
     "seal_migration_from": env["OPENBAO_SEAL_MIGRATION_FROM"],
     "migration": bool(status and status.get("migration")),
     "ha": ha_status(),
+    # Optional plugins installed from the catalog (the Plugins page)
+    "plugins": sorted(pid for pid in openbao.declared_plugins()
+                      if openbao.catalog_entry(pid)),
 }
 
 json.dump(result, fp=sys.stdout)

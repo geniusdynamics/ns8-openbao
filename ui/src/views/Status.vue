@@ -211,6 +211,34 @@
         </NsInfoCard>
       </cv-column>
     </cv-row>
+    <cv-row>
+      <cv-column :md="4" :max="4">
+        <NsInfoCard
+          light
+          :title="
+            $tc('status.plugins_installed', (openbao.plugins || []).length, {
+              count: (openbao.plugins || []).length,
+            })
+          "
+          :description="$t('status.plugins_description')"
+          :icon="Plug32Icon"
+          :loading="loading.getOpenbaoStatus"
+          class="min-height-card"
+        >
+          <template slot="content">
+            <div class="card-actions">
+              <NsButton
+                kind="ghost"
+                :icon="ArrowRight20"
+                @click="goToAppPage(instanceName, 'plugins')"
+              >
+                {{ $t("status.manage_plugins") }}
+              </NsButton>
+            </div>
+          </template>
+        </NsInfoCard>
+      </cv-column>
+    </cv-row>
     <cv-row v-if="openbao.ha && openbao.ha.role !== 'standalone'">
       <cv-column :md="8" :max="8">
         <NsInfoCard
@@ -475,6 +503,7 @@ import Password32 from "@carbon/icons-vue/es/password/32";
 import SetupWizard from "@/components/SetupWizard";
 import Group32 from "@carbon/icons-vue/es/group/32";
 import Network32 from "@carbon/icons-vue/es/network--3/32";
+import Plug32 from "@carbon/icons-vue/es/plug/32";
 
 export default {
   name: "Status",
@@ -498,6 +527,7 @@ export default {
       Password32Icon: Password32,
       Group32Icon: Group32,
       Network32Icon: Network32,
+      Plug32Icon: Plug32,
       isRedirectChecked: false,
       redirectTimeout: 0,
       status: {
@@ -523,6 +553,7 @@ export default {
         migration: false,
         ui_url: "",
         ha: null,
+        plugins: [],
       },
       isOpenbaoStatusLoaded: false,
       isWizardShown: false,

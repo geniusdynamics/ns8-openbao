@@ -29,7 +29,8 @@
                 "is_self": null,
                 "leader_address": "",
                 "peers": null
-            }
+            },
+            "plugins": []
         }
     ],
     "type": "object",
@@ -50,7 +51,8 @@
         "root_token_present",
         "seal_migration_from",
         "migration",
-        "ha"
+        "ha",
+        "plugins"
     ],
     "properties": {
         "service_active": {
@@ -195,6 +197,13 @@
                 "leader_address",
                 "peers"
             ]
+        },
+        "plugins": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "description": "Ids of the optional plugins installed from the catalog"
         }
     }
 }

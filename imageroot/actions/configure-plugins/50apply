@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# Install the binaries of the enabled plugins, declare them in the server
+# configuration and restart OpenBao if the set changed. Then remove the
+# images of plugins that are no longer enabled.
+#
+
+import sys
+import agent
+import openbao
+
+env = openbao.read_environment()
+openbao.install_plugins()
+if env.get("TRAEFIK_HOST") and openbao.service_is_active():
+    record = openbao.write_config()
+    status = openbao.get_seal_status()
+    change = openbao.required_change(record, initialized=bool(status and status.get("initialized")))
+    if change == "restart":
+        print("Restarting OpenBao to load the plugins", file=sys.stderr)
+        agent.run_helper("systemctl", "--user", "restart", "openbao.service").check_returncode()
+    elif change == "reload":
+        agent.run_helper("systemctl", "--user", "reload", "openbao.service").check_returncode()
+        openbao.mark_applied(record)
+else:
+    print("OpenBao is not running: the plugins are loaded at its next start", file=sys.stderr)
+
+enabled = set(openbao.enabled_plugins(env))
+openbao.remove_plugin_images([p["id"] for p in openbao.PLUGIN_CATALOG if p["id"] not in enabled])

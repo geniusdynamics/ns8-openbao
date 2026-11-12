@@ -1,0 +1,36 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# Pull the images of the newly enabled plugins (pinned by digest). The
+# setting is saved only if every image is available, so a failed
+# download leaves OpenBao unchanged.
+#
+
+import json
+import sys
+import agent
+import openbao
+
+request = json.load(sys.stdin)
+env = openbao.read_environment()
+previous = openbao.enabled_plugins(env)
+wanted = [p["id"] for p in openbao.PLUGIN_CATALOG if p["id"] in request["plugins"]]
+
+errors = openbao.pull_plugin_images(wanted)
+if errors:
+    for plugin_id, message in errors.items():
+        print(agent.SD_ERR + f"Cannot download plugin {plugin_id}: {message}", file=sys.stderr)
+    agent.set_status("validation-failed")
+    json.dump([{"field": "plugins", "parameter": "plugins", "value": plugin_id,
+                "error": "plugin_download_failed"} for plugin_id in errors], fp=sys.stdout)
+    sys.exit(3)
+
+agent.set_env("OPENBAO_PLUGINS", ",".join(wanted))
+removed = [p for p in previous if p not in wanted]
+if removed:
+    print(f"Plugins disabled: {', '.join(removed)}", file=sys.stderr)
