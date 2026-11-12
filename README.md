@@ -383,6 +383,15 @@ these built-in policies:
 The name of a policy created in OpenBao can be typed too. A group may
 appear in several rows to get several policies.
 
+> **Note:** when several policies of a token match a path, OpenBao applies
+> only the most specific path; it does not add their capabilities up
+> (capabilities are merged only for identical paths). `ns8-admin` repeats
+> the paths of the other built-in policies, so giving administrators a
+> built-in policy too never narrows their access. A custom policy with a
+> narrower path, mapped to a group the administrators belong to, does
+> narrow it: an administrator would then, for example, only read under
+> that path.
+
 Mappings need an administrator token to be written, so they are applied
 by the self-initialization or, on an initialized server, by
 `openbao-apply-config`. Run it again after changing them: it also removes
