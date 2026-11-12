@@ -5,6 +5,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 
+import ipaddress
 import json
 import os
 import sys
@@ -38,6 +39,28 @@ if auto_initialize and openbao.storage_state() == "initialized":
     print("OpenBao is already initialized: automatic initialization is ignored", file=sys.stderr)
     auto_initialize = False
 agent.set_env("OPENBAO_AUTO_INITIALIZE", str(bool(auto_initialize)))
+
+if "ip_allowlist" in request:
+    agent.set_env("OPENBAO_IP_ALLOWLIST", ",".join(
+        str(ipaddress.ip_network(n, strict=False)) for n in request["ip_allowlist"]))
+if "ldap_group_policies" in request:
+    agent.set_env("OPENBAO_LDAP_GROUP_POLICIES",
+                  openbao.encode_group_policies(request["ldap_group_policies"]))
+if "starter_kits" in request:
+    agent.set_env("OPENBAO_STARTER_KITS", ",".join(request["starter_kits"]))
+
+set_bool("OPENBAO_VPN_API", "vpn_api")
+set_bool("OPENBAO_PUBLIC_ACCESS", "public_access")
+if "snapshot_keep" in request:
+    agent.set_env("OPENBAO_SNAPSHOT_KEEP", str(request["snapshot_keep"]))
+for field, var in [
+        ("transit_address", "OPENBAO_TRANSIT_ADDRESS"),
+        ("transit_mount", "OPENBAO_TRANSIT_MOUNT"),
+        ("transit_key", "OPENBAO_TRANSIT_KEY"),
+    ]:
+    if field in request:
+        agent.set_env(var, request[field])
+set_bool("OPENBAO_TRANSIT_TLS_SKIP_VERIFY", "transit_tls_skip_verify")
 
 if "notify_recipients" in request:
     agent.set_env("OPENBAO_NOTIFY_RECIPIENTS", ",".join(request["notify_recipients"]))

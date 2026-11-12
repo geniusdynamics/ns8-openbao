@@ -16,10 +16,34 @@
             "auto_initialize": false,
             "notify_recipients": [
                 "security@example.org"
-            ]
+            ],
+            "ip_allowlist": [
+                "192.168.1.0/24",
+                "10.0.0.5"
+            ],
+            "ldap_group_policies": [
+                {
+                    "group": "Developers",
+                    "policy": "ns8-secrets-rw"
+                }
+            ],
+            "starter_kits": [
+                "kv",
+                "pki"
+            ],
+            "vpn_api": false,
+            "public_access": true,
+            "snapshot_keep": 7
         },
         {
             "host": "vault.example.org"
+        },
+        {
+            "host": "vault.example.org",
+            "unseal_mode": "transit",
+            "transit_address": "https://kms.example.org:8200",
+            "transit_mount": "transit",
+            "transit_key": "ns8-openbao"
         }
     ],
     "type": "object",
@@ -65,10 +89,11 @@
         "unseal_mode": {
             "type": "string",
             "title": "Unseal mode",
-            "description": "'manual': Shamir unseal keys must be provided after every restart. 'auto': a static key stored on the node unseals OpenBao automatically. It can be changed only before OpenBao is initialized. Defaults to the current value, initially 'manual'",
+            "description": "'manual': Shamir unseal keys must be provided after every restart. 'auto': a static key stored on the node unseals OpenBao automatically. 'transit': an external OpenBao or Vault Transit engine unseals it (store its token first with openbao-transit-token). It can be changed only before OpenBao is initialized. Defaults to the current value, initially 'manual'",
             "enum": [
                 "manual",
-                "auto"
+                "auto",
+                "transit"
             ]
         },
         "user_domain": {
@@ -97,6 +122,93 @@
                 "format": "email",
                 "pattern": "^[^@\\s,]+@[^@\\s,]+$"
             }
+        },
+        "ip_allowlist": {
+            "type": "array",
+            "title": "Allowed networks",
+            "description": "Client IP addresses or networks (CIDR) allowed to reach the OpenBao API and web UI through Traefik. Empty list: no restriction",
+            "maxItems": 100,
+            "uniqueItems": true,
+            "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 50
+            }
+        },
+        "ldap_group_policies": {
+            "type": "array",
+            "title": "Group policies",
+            "description": "Additional directory groups mapped to OpenBao policies, applied by self-initialization or by openbao-apply-config",
+            "maxItems": 100,
+            "items": {
+                "type": "object",
+                "required": [
+                    "group",
+                    "policy"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "group": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                    },
+                    "policy": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9_.-]{1,128}$"
+                    }
+                }
+            }
+        },
+        "starter_kits": {
+            "type": "array",
+            "title": "Starter kits",
+            "description": "Components prepared by self-initialization or by openbao-apply-config: 'kv' key/value v2 store at secret/, 'pki' internal certificate authority at pki/, 'approle' application login",
+            "uniqueItems": true,
+            "items": {
+                "type": "string",
+                "enum": [
+                    "kv",
+                    "pki",
+                    "approle"
+                ]
+            }
+        },
+        "vpn_api": {
+            "type": "boolean",
+            "title": "Cluster network API",
+            "description": "Also publish the OpenBao API on the node cluster VPN address (third module TCP port), for NethServer modules and services of the cluster"
+        },
+        "transit_address": {
+            "type": "string",
+            "description": "Transit seal: URL of the external OpenBao or Vault, like https://vault.example.org:8200",
+            "pattern": "^$|^https?://",
+            "maxLength": 512
+        },
+        "transit_mount": {
+            "type": "string",
+            "description": "Transit seal: mount path of the transit engine. Default 'transit'",
+            "pattern": "^$|^[A-Za-z0-9_./-]{1,128}$"
+        },
+        "transit_key": {
+            "type": "string",
+            "description": "Transit seal: name of the transit key",
+            "pattern": "^$|^[A-Za-z0-9_.-]{1,128}$"
+        },
+        "transit_tls_skip_verify": {
+            "type": "boolean",
+            "description": "Transit seal: do not verify the TLS certificate of the external server"
+        },
+        "public_access": {
+            "type": "boolean",
+            "title": "Public access",
+            "description": "Publish the API and web UI through Traefik on the host name. false: reachable only on the cluster network API (requires vpn_api). Default true"
+        },
+        "snapshot_keep": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 90,
+            "description": "Number of daily Raft snapshots kept on the node (requires the module token). 0 disables them"
         }
     }
 }

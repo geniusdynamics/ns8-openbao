@@ -23,6 +23,16 @@ for evar in [
         "OPENBAO_USER_DOMAIN",
         "OPENBAO_LDAP_ADMIN_GROUP",
         "OPENBAO_NOTIFY_RECIPIENTS",
+        "OPENBAO_IP_ALLOWLIST",
+        "OPENBAO_LDAP_GROUP_POLICIES",
+        "OPENBAO_STARTER_KITS",
+        "OPENBAO_VPN_API",
+        "OPENBAO_TRANSIT_ADDRESS",
+        "OPENBAO_TRANSIT_MOUNT",
+        "OPENBAO_TRANSIT_KEY",
+        "OPENBAO_TRANSIT_TLS_SKIP_VERIFY",
+        "OPENBAO_PUBLIC_ACCESS",
+        "OPENBAO_SNAPSHOT_KEEP",
     ]:
     value = original_environment.get(evar, openbao.DEFAULTS.get(evar))
     if value is not None:

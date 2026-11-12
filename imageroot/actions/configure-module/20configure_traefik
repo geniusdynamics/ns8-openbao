@@ -9,8 +9,21 @@ import json
 import os
 import sys
 import agent
+import openbao
 
 request = json.load(sys.stdin)
+
+if not openbao.public_access(openbao.read_environment()):
+    # Cluster network only: remove the public route, if any
+    response = agent.tasks.run(
+        agent_id=agent.resolve_agent_id("traefik@node"),
+        action="delete-route",
+        data={"instance": os.environ["MODULE_ID"]},
+        extra={"isNotificationHidden": True},
+    )
+    if response["exit_code"] != 0:
+        print(agent.SD_WARNING + "No public route to remove", file=sys.stderr)
+    sys.exit(0)
 
 # The route "instance" starts with MODULE_ID: it is removed automatically
 # when the module is removed.
@@ -22,6 +35,8 @@ route = {
     "lets_encrypt_check": True,
     "lets_encrypt_cleanup": True,
 }
+# Always send the list: an empty list removes a previous restriction
+route["ip_allowlist"] = openbao.ip_allowlist(openbao.read_environment())
 if "lets_encrypt" in request:
     route["lets_encrypt"] = request["lets_encrypt"]
 

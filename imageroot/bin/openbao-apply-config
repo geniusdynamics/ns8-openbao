@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# Apply the OpenBao settings that need an administrator token to an
+# initialized server: built-in policies, directory login (LDAP auth on the
+# selected user domain), the group to policy mapping and the starter kits.
+# Run it on the node:
+#
+#   runagent -m openbao1 openbao-apply-config
+#
+# The token is read from the BAO_TOKEN environment variable or prompted on
+# the terminal. It must allow writes to sys/policies/acl, sys/auth,
+# sys/mounts, auth/ldap and pki (a root or ns8-admin token works). It is
+# used only by this command: never stored, never sent through Redis.
+#
+# Every step is idempotent: run it again after changing the settings, or
+# after the user domain credentials change. Group mappings created by a
+# previous run and no longer configured are removed; mappings created by
+# hand are left untouched.
+#
+
+import getpass
+import json
+import os
+import sys
+import urllib.error
+import openbao
+
+env = openbao.read_environment()
+domain = env["OPENBAO_USER_DOMAIN"]
+kits = openbao.starter_kits(env)
+host = env.get("TRAEFIK_HOST", "")
+
+status = openbao.get_seal_status()
+if status is None:
+    sys.exit("OpenBao is not running")
+if not status.get("initialized"):
+    sys.exit("OpenBao is not initialized yet")
+if status.get("sealed"):
+    sys.exit("OpenBao is sealed: unseal it first")
+
+params = None
+if domain:
+    params = openbao.discover_ldap(domain)
+    if params is None:
+        sys.exit(f"User domain {domain} is not available")
+
+token = os.environ.get("BAO_TOKEN") or getpass.getpass("OpenBao token: ")
+if not token:
+    sys.exit("An OpenBao token is required")
+
+
+def call(path, method="GET", data=None):
+    return openbao.api_request(path, method=method, data=data, token=token)
+
+
+def run(req):
+    try:
+        call(req["path"], method="POST", data=req["data"])
+    except urllib.error.HTTPError as ex:
+        detail = ex.read().decode(errors="replace")
+        sys.exit(f"{req['name']} failed: HTTP {ex.code} {detail}")
+    print(f"{req['name']}: done")
+
+
+try:
+    auth_mounts = call("sys/auth")
+except urllib.error.HTTPError as ex:
+    sys.exit(f"The token was refused: HTTP {ex.code}")
+auth_mounts = auth_mounts.get("data", auth_mounts)
+secret_mounts = call("sys/mounts")
+secret_mounts = secret_mounts.get("data", secret_mounts)
+
+# 1. Built-in policies
+for req in openbao.policy_requests():
+    run(req)
+
+# 2. Directory login and group mapping
+groups = openbao.group_policy_map(env) if domain else {}
+if params:
+    if "ldap/" not in auth_mounts:
+        # Since OpenBao 2.7 the LDAP auth method is an external plugin
+        try:
+            call("sys/plugins/catalog/auth/ldap")
+        except urllib.error.HTTPError:
+            sys.exit("The LDAP auth plugin is not registered: restart OpenBao "
+                     "(systemctl --user restart openbao.service) and check its logs")
+    elif auth_mounts["ldap/"].get("type") != "ldap":
+        sys.exit("The ldap/ auth path is used by another auth method")
+    login = openbao.directory_login_requests(params, env["OPENBAO_LDAP_ADMIN_GROUP"],
+                                             params["bind_password"])
+    if "ldap/" in auth_mounts:
+        print("LDAP auth method already enabled")
+    else:
+        run(login[1])
+    run(login[2])
+    for req in openbao.group_requests(groups):
+        run(req)
+
+try:
+    with open(openbao.APPLIED_GROUPS_FILE, encoding="utf-8") as afile:
+        previous = json.load(afile)
+except (FileNotFoundError, ValueError):
+    previous = []
+if "ldap/" in auth_mounts or params:
+    for group in previous:
+        if group not in groups:
+            try:
+                call("auth/ldap/groups/" + group, method="DELETE")
+                print(f"Group mapping {group} removed")
+            except urllib.error.HTTPError as ex:
+                print(f"Cannot remove group mapping {group}: HTTP {ex.code}", file=sys.stderr)
+openbao._write_file(openbao.APPLIED_GROUPS_FILE, json.dumps(sorted(groups)) + "\n", 0o644)
+
+# 3. Starter kits, skipping what already exists
+for req in openbao.kit_requests(kits, host):
+    if req["path"] == "sys/mounts/secret" and "secret/" in secret_mounts:
+        print("Key/value store secret/ already enabled")
+        continue
+    if req["path"] == "sys/auth/approle" and "approle/" in auth_mounts:
+        print("AppRole auth method already enabled")
+        continue
+    if req["path"] == "sys/mounts/pki" and "pki/" in secret_mounts:
+        print("PKI secrets engine already enabled")
+        continue
+    if req["path"] == "pki/root/generate/internal":
+        try:
+            issuers = call("pki/issuers", method="LIST")
+            if issuers.get("data", {}).get("keys"):
+                print("PKI root CA already present")
+                continue
+        except urllib.error.HTTPError:
+            pass
+    run(req)
+
+print(json.dumps({
+    "user_domain": domain,
+    "group_policies": groups,
+    "starter_kits": kits,
+    "login": "bao login -method=ldap username=<user>" if domain else "",
+}, indent=2))

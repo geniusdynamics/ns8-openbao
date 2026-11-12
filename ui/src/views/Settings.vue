@@ -64,6 +64,77 @@
                 $t("settings.enabled")
               }}</template>
             </NsToggle>
+            <cv-text-area
+              :label="$t('settings.ip_allowlist')"
+              :helper-text="$t('settings.ip_allowlist_helper')"
+              placeholder="192.168.1.0/24"
+              v-model="ipAllowlistText"
+              :invalid-message="error.ip_allowlist"
+              :disabled="isFormDisabled"
+              :rows="3"
+              class="mg-bottom maxwidth"
+              ref="ip_allowlist"
+            />
+            <NsInlineNotification
+              v-if="ipAllowlist.length"
+              kind="warning"
+              :title="$t('settings.ip_allowlist_warning_title')"
+              :description="$t('settings.ip_allowlist_warning_description')"
+              :showCloseButton="false"
+              class="maxwidth"
+            />
+            <NsToggle
+              value="vpnApi"
+              :label="$t('settings.vpn_api')"
+              v-model="isVpnApiEnabled"
+              :disabled="isFormDisabled"
+              class="mg-bottom"
+            >
+              <template slot="tooltip">{{
+                $t("settings.vpn_api_helper")
+              }}</template>
+              <template slot="text-left">{{
+                $t("settings.disabled")
+              }}</template>
+              <template slot="text-right">{{
+                $t("settings.enabled")
+              }}</template>
+            </NsToggle>
+            <p
+              v-if="isVpnApiEnabled && savedConfig && savedConfig.vpn_api_url"
+              class="section-description"
+            >
+              {{ $t("settings.vpn_api_url", { url: savedConfig.vpn_api_url }) }}
+            </p>
+            <NsToggle
+              value="publicAccess"
+              :label="$t('settings.public_access')"
+              v-model="isPublicAccessEnabled"
+              :disabled="isFormDisabled"
+              class="mg-bottom"
+            >
+              <template slot="tooltip">{{
+                $t("settings.public_access_helper")
+              }}</template>
+              <template slot="text-left">{{
+                $t("settings.disabled")
+              }}</template>
+              <template slot="text-right">{{
+                $t("settings.enabled")
+              }}</template>
+            </NsToggle>
+            <NsInlineNotification
+              v-if="!isPublicAccessEnabled"
+              :kind="isVpnApiEnabled ? 'warning' : 'error'"
+              :title="$t('settings.public_access_off_title')"
+              :description="
+                isVpnApiEnabled
+                  ? $t('settings.public_access_off_description')
+                  : $t('settings.public_access_requires_vpn_api')
+              "
+              :showCloseButton="false"
+              class="maxwidth"
+            />
             <!-- unseal -->
             <h4 class="section-title">{{ $t("settings.section_unseal") }}</h4>
             <cv-radio-group
@@ -90,7 +161,75 @@
               <p class="radio-description">
                 {{ $t("settings.unseal_mode_auto_description") }}
               </p>
+              <cv-radio-button
+                :label="$t('settings.unseal_mode_transit')"
+                value="transit"
+                v-model="unsealMode"
+                :disabled="isFormDisabled || isUnsealModeLocked"
+              />
+              <p class="radio-description">
+                {{ $t("settings.unseal_mode_transit_description") }}
+              </p>
             </cv-radio-group>
+            <div v-if="unsealMode === 'transit'" class="maxwidth mg-bottom">
+              <NsTextInput
+                :label="$t('settings.transit_address')"
+                placeholder="https://kms.example.org:8200"
+                v-model.trim="transitAddress"
+                :invalid-message="error.transit_address"
+                :disabled="isFormDisabled || isUnsealModeLocked"
+                class="mg-bottom"
+                ref="transit_address"
+              />
+              <NsTextInput
+                :label="$t('settings.transit_mount')"
+                placeholder="transit"
+                v-model.trim="transitMount"
+                :disabled="isFormDisabled || isUnsealModeLocked"
+                class="mg-bottom"
+              />
+              <NsTextInput
+                :label="$t('settings.transit_key')"
+                v-model.trim="transitKey"
+                :invalid-message="error.transit_key"
+                :disabled="isFormDisabled || isUnsealModeLocked"
+                class="mg-bottom"
+                ref="transit_key"
+              />
+              <NsToggle
+                value="transitTlsSkipVerify"
+                :label="$t('settings.transit_tls_skip_verify')"
+                v-model="isTransitTlsSkipVerify"
+                :disabled="isFormDisabled || isUnsealModeLocked"
+                class="mg-bottom"
+              >
+                <template slot="text-left">{{
+                  $t("settings.disabled")
+                }}</template>
+                <template slot="text-right">{{
+                  $t("settings.enabled")
+                }}</template>
+              </NsToggle>
+              <template
+                v-if="savedConfig && !savedConfig.transit_token_present"
+              >
+                <NsInlineNotification
+                  kind="warning"
+                  :title="$t('settings.transit_token_missing_title')"
+                  :description="
+                    $t('settings.transit_token_missing_description')
+                  "
+                  :showCloseButton="false"
+                />
+                <NsCodeSnippet
+                  :copyTooltip="$t('settings.copy_to_clipboard')"
+                  :copy-feedback="$t('settings.copied_to_clipboard')"
+                  :feedback-aria-label="$t('settings.copied_to_clipboard')"
+                  hideExpandButton
+                  >{{ transitTokenCommand }}</NsCodeSnippet
+                >
+              </template>
+            </div>
             <NsInlineNotification
               v-if="isUnsealModeLocked"
               kind="info"
@@ -139,6 +278,66 @@
                 class="mg-bottom maxwidth"
                 ref="ldap_admin_group"
               />
+              <div class="maxwidth mg-bottom" ref="ldap_group_policies">
+                <p class="field-label">
+                  {{ $t("settings.group_policies") }}
+                </p>
+                <p class="section-description">
+                  {{ $t("settings.group_policies_description") }}
+                </p>
+                <div
+                  v-for="(row, index) in groupPolicies"
+                  :key="row.key"
+                  class="mapping-row"
+                >
+                  <NsComboBox
+                    v-model="row.group"
+                    :options="groupOptions"
+                    :title="index === 0 ? $t('settings.group') : ''"
+                    :label="$t('settings.ldap_admin_group_placeholder')"
+                    :acceptUserInput="true"
+                    :userInputLabel="$t('settings.group_user_input')"
+                    :disabled="isFormDisabled"
+                    class="mapping-field"
+                  />
+                  <NsComboBox
+                    v-model="row.policy"
+                    :options="policyOptions"
+                    :title="index === 0 ? $t('settings.policy') : ''"
+                    :label="$t('settings.policy_placeholder')"
+                    :acceptUserInput="true"
+                    :userInputLabel="$t('settings.policy_user_input')"
+                    :disabled="isFormDisabled"
+                    class="mapping-field"
+                  />
+                  <cv-icon-button
+                    kind="ghost"
+                    size="field"
+                    type="button"
+                    :icon="TrashCan20"
+                    :label="$t('settings.remove_group_policy')"
+                    tip-position="left"
+                    :disabled="isFormDisabled"
+                    class="mapping-remove"
+                    @click="removeGroupPolicy(index)"
+                  />
+                </div>
+                <NsButton
+                  kind="ghost"
+                  size="field"
+                  type="button"
+                  :icon="Add20"
+                  :disabled="isFormDisabled"
+                  @click="addGroupPolicy"
+                  >{{ $t("settings.add_group_policy") }}</NsButton
+                >
+                <NsInlineNotification
+                  v-if="error.ldap_group_policies"
+                  kind="error"
+                  :title="error.ldap_group_policies"
+                  :showCloseButton="false"
+                />
+              </div>
               <template v-if="canAutoInitialize">
                 <NsCheckbox
                   value="autoInitialize"
@@ -158,18 +357,6 @@
                   class="maxwidth"
                 />
               </template>
-              <div v-else class="maxwidth mg-bottom">
-                <p class="section-description">
-                  {{ $t("settings.setup_ldap_description") }}
-                </p>
-                <NsCodeSnippet
-                  :copyTooltip="$t('settings.copy_to_clipboard')"
-                  :copy-feedback="$t('settings.copied_to_clipboard')"
-                  :feedback-aria-label="$t('settings.copied_to_clipboard')"
-                  hideExpandButton
-                  >{{ setupLdapCommand }}</NsCodeSnippet
-                >
-              </div>
               <NsInlineNotification
                 v-if="error.auto_initialize"
                 kind="error"
@@ -178,6 +365,117 @@
                 class="maxwidth"
               />
             </template>
+            <!-- starter kits -->
+            <h4 class="section-title">
+              {{ $t("settings.section_starter_kits") }}
+            </h4>
+            <p class="section-description">
+              {{ $t("settings.starter_kits_description") }}
+            </p>
+            <div
+              v-for="kit in starterKitList"
+              :key="kit"
+              class="kit-item maxwidth"
+            >
+              <NsCheckbox
+                :value="kit"
+                v-model="starterKits"
+                :label="$t('settings.kit_' + kit)"
+                :disabled="isFormDisabled"
+              />
+              <p class="kit-description">
+                {{ $t("settings.kit_" + kit + "_description") }}
+              </p>
+            </div>
+            <div v-if="!canAutoInitialize" class="maxwidth mg-bottom">
+              <p class="section-description">
+                {{ $t("settings.apply_config_description") }}
+              </p>
+              <NsCodeSnippet
+                :copyTooltip="$t('settings.copy_to_clipboard')"
+                :copy-feedback="$t('settings.copied_to_clipboard')"
+                :feedback-aria-label="$t('settings.copied_to_clipboard')"
+                hideExpandButton
+                >{{ applyConfigCommand }}</NsCodeSnippet
+              >
+            </div>
+            <!-- snapshots -->
+            <h4 class="section-title">
+              {{ $t("settings.section_snapshots") }}
+            </h4>
+            <p class="section-description">
+              {{ $t("settings.snapshots_description") }}
+            </p>
+            <NsTextInput
+              type="number"
+              min="0"
+              max="90"
+              :label="$t('settings.snapshot_keep')"
+              :helper-text="$t('settings.snapshot_keep_helper')"
+              v-model.number="snapshotKeep"
+              :invalid-message="error.snapshot_keep"
+              :disabled="isFormDisabled"
+              class="mg-bottom snapshot-keep"
+              ref="snapshot_keep"
+            />
+            <NsInlineNotification
+              v-if="
+                snapshotKeep > 0 && snapshotInfo && !snapshotInfo.module_token
+              "
+              kind="warning"
+              :title="$t('settings.snapshot_token_missing_title')"
+              :description="
+                $t('settings.snapshot_token_missing_description', {
+                  command: moduleTokenCommand,
+                })
+              "
+              :showCloseButton="false"
+              class="maxwidth"
+            />
+            <div
+              v-if="snapshotInfo && snapshotInfo.snapshots.length"
+              class="maxwidth mg-bottom"
+            >
+              <cv-structured-list>
+                <template slot="headings">
+                  <cv-structured-list-heading>{{
+                    $t("settings.snapshot_name")
+                  }}</cv-structured-list-heading>
+                  <cv-structured-list-heading>{{
+                    $t("settings.snapshot_created")
+                  }}</cv-structured-list-heading>
+                  <cv-structured-list-heading>{{
+                    $t("settings.snapshot_size")
+                  }}</cv-structured-list-heading>
+                </template>
+                <template slot="items">
+                  <cv-structured-list-item
+                    v-for="snap in snapshotInfo.snapshots"
+                    :key="snap.name"
+                  >
+                    <cv-structured-list-data class="break-word">{{
+                      snap.name
+                    }}</cv-structured-list-data>
+                    <cv-structured-list-data>{{
+                      new Date(snap.created * 1000).toLocaleString()
+                    }}</cv-structured-list-data>
+                    <cv-structured-list-data>{{
+                      snap.size | byteFormat
+                    }}</cv-structured-list-data>
+                  </cv-structured-list-item>
+                </template>
+              </cv-structured-list>
+              <p class="section-description">
+                {{ $t("settings.snapshot_restore_description") }}
+              </p>
+              <NsCodeSnippet
+                :copyTooltip="$t('settings.copy_to_clipboard')"
+                :copy-feedback="$t('settings.copied_to_clipboard')"
+                :feedback-aria-label="$t('settings.copied_to_clipboard')"
+                hideExpandButton
+                >{{ snapshotRestoreCommand }}</NsCodeSnippet
+              >
+            </div>
             <!-- notifications -->
             <h4 class="section-title">
               {{ $t("settings.section_notifications") }}
@@ -336,6 +634,19 @@ export default {
       domainGroups: [],
       notifyRecipients: "",
       testEmailResult: null,
+      ipAllowlistText: "",
+      groupPolicies: [],
+      groupPolicyKey: 0,
+      starterKits: ["kv"],
+      starterKitList: ["kv", "pki", "approle"],
+      isVpnApiEnabled: false,
+      isPublicAccessEnabled: true,
+      snapshotKeep: 0,
+      snapshotInfo: null,
+      transitAddress: "",
+      transitMount: "transit",
+      transitKey: "",
+      isTransitTlsSkipVerify: false,
       isAdvancedOpen: false,
       savedConfig: null,
       openbaoStatus: null,
@@ -359,6 +670,13 @@ export default {
         ldap_admin_group: "",
         auto_initialize: "",
         notify_recipients: "",
+        ip_allowlist: "",
+        ldap_group_policies: "",
+        transit_address: "",
+        transit_key: "",
+        vpn_api: "",
+        public_access: "",
+        snapshot_keep: "",
       },
     };
   },
@@ -375,11 +693,48 @@ export default {
       // The seal type is stored by OpenBao at initialization time
       return !!(this.openbaoStatus && this.openbaoStatus.initialized);
     },
+    ipAllowlist() {
+      return this.ipAllowlistText
+        .split(/[\s,;]+/)
+        .map((n) => n.trim())
+        .filter((n) => n);
+    },
+    groupOptions() {
+      return this.domainGroups.map((g) => ({ name: g, label: g, value: g }));
+    },
+    policyOptions() {
+      const names =
+        (this.savedConfig && this.savedConfig.builtin_policies) || [];
+      return names.map((p) => ({
+        name: p,
+        label: p,
+        value: p,
+        description: this.$t("settings.policy_" + p.replace(/-/g, "_")),
+      }));
+    },
+    completeGroupPolicies() {
+      return this.groupPolicies
+        .filter((row) => row.group && row.policy)
+        .map((row) => ({ group: row.group.trim(), policy: row.policy.trim() }));
+    },
+    moduleTokenCommand() {
+      return `runagent -m ${this.instanceName} openbao-module-token create`;
+    },
+    snapshotRestoreCommand() {
+      const latest =
+        this.snapshotInfo && this.snapshotInfo.snapshots.length
+          ? this.snapshotInfo.snapshots[0].name
+          : "<snapshot>";
+      return `runagent -m ${this.instanceName} openbao-snapshot-restore ${latest}`;
+    },
+    transitTokenCommand() {
+      return `runagent -m ${this.instanceName} openbao-transit-token`;
+    },
     canAutoInitialize() {
       // self-initialization needs an auto-unseal mechanism and an
       // uninitialized server
       return (
-        this.unsealMode === "auto" &&
+        ["auto", "transit"].includes(this.unsealMode) &&
         !(this.openbaoStatus && this.openbaoStatus.initialized)
       );
     },
@@ -406,6 +761,7 @@ export default {
   created() {
     this.getConfiguration();
     this.getOpenbaoStatus();
+    this.listSnapshots();
   },
   methods: {
     async getConfiguration() {
@@ -460,13 +816,31 @@ export default {
       this.unsealMode = config.unseal_mode;
       this.logLevel = config.log_level;
       this.isAuditLogEnabled = config.audit_log;
-      this.userDomain = config.user_domain;
-      this.ldapAdminGroup = config.ldap_admin_group;
+      // NsComboBox resolves a new value against its current options: set
+      // the values after the options computed from savedConfig are rendered
+      this.$nextTick(() => {
+        this.userDomain = config.user_domain;
+        this.ldapAdminGroup = config.ldap_admin_group;
+        if (this.userDomain) {
+          this.listDomainGroups();
+        }
+      });
       this.isAutoInitializeEnabled = config.auto_initialize;
       this.notifyRecipients = config.notify_recipients.join(", ");
-      if (this.userDomain) {
-        this.listDomainGroups();
-      }
+      this.ipAllowlistText = config.ip_allowlist.join("\n");
+      this.isVpnApiEnabled = config.vpn_api;
+      this.isPublicAccessEnabled = config.public_access;
+      this.snapshotKeep = config.snapshot_keep;
+      this.transitAddress = config.transit_address;
+      this.transitMount = config.transit_mount || "transit";
+      this.transitKey = config.transit_key;
+      this.isTransitTlsSkipVerify = config.transit_tls_skip_verify;
+      this.starterKits = [...config.starter_kits];
+      this.groupPolicies = config.ldap_group_policies.map((m) => ({
+        key: this.groupPolicyKey++,
+        group: m.group,
+        policy: m.policy,
+      }));
       this.loading.getConfiguration = false;
       this.focusElement("host");
     },
@@ -510,6 +884,39 @@ export default {
       this.openbaoStatus = taskResult.output;
       this.loading.getOpenbaoStatus = false;
     },
+    async listSnapshots() {
+      const taskAction = "list-snapshots";
+      const eventId = this.getUuid();
+      this.core.$root.$once(
+        `${taskAction}-completed-${eventId}`,
+        (taskContext, taskResult) => {
+          this.snapshotInfo = taskResult.output;
+        }
+      );
+      const res = await to(
+        this.createModuleTaskForApp(this.instanceName, {
+          action: taskAction,
+          extra: {
+            title: this.$t("action." + taskAction),
+            isNotificationHidden: true,
+            eventId,
+          },
+        })
+      );
+      if (res[0]) {
+        console.error(`error creating task ${taskAction}`, res[0]);
+      }
+    },
+    addGroupPolicy() {
+      this.groupPolicies.push({
+        key: this.groupPolicyKey++,
+        group: "",
+        policy: "",
+      });
+    },
+    removeGroupPolicy(index) {
+      this.groupPolicies.splice(index, 1);
+    },
     onUserDomainChange() {
       this.ldapAdminGroup = "";
       this.domainGroups = [];
@@ -537,6 +944,23 @@ export default {
         }
         isValidationOk = false;
       }
+      const incomplete = this.groupPolicies.some(
+        (row) => !!row.group !== !!row.policy
+      );
+      if (this.userDomain && incomplete) {
+        this.error.ldap_group_policies = this.$t(
+          "settings.group_policy_incomplete"
+        );
+        isValidationOk = false;
+      }
+      if (!this.isPublicAccessEnabled && !this.isVpnApiEnabled) {
+        isValidationOk = false;
+      }
+      const keep = Number(this.snapshotKeep);
+      if (!Number.isInteger(keep) || keep < 0 || keep > 90) {
+        this.error.snapshot_keep = this.$t("settings.snapshot_keep_invalid");
+        isValidationOk = false;
+      }
       if (isValidationOk && !this.validateRecipients()) {
         isValidationOk = false;
       }
@@ -555,6 +979,22 @@ export default {
         // set i18n error message
         this.error[param] = this.$t("settings." + validationError.error);
 
+        if (param.startsWith("ldap_group_policies")) {
+          this.error.ldap_group_policies = this.$t(
+            "settings." + validationError.error,
+            { group: validationError.value }
+          );
+          continue;
+        }
+        if (param.startsWith("ip_allowlist")) {
+          this.error.ip_allowlist = this.$t(
+            "settings." + validationError.error,
+            {
+              network: validationError.value,
+            }
+          );
+          continue;
+        }
         if (param.startsWith("notify_recipients")) {
           this.error.notify_recipients = this.$t("settings.invalid_email", {
             address: validationError.value,
@@ -617,6 +1057,18 @@ export default {
               this.canAutoInitialize &&
               this.isAutoInitializeEnabled,
             notify_recipients: this.recipientList,
+            ip_allowlist: this.ipAllowlist,
+            ldap_group_policies: this.userDomain
+              ? this.completeGroupPolicies
+              : [],
+            starter_kits: this.starterKits,
+            vpn_api: this.isVpnApiEnabled,
+            public_access: this.isPublicAccessEnabled,
+            snapshot_keep: Number(this.snapshotKeep) || 0,
+            transit_address: this.transitAddress,
+            transit_mount: this.transitMount,
+            transit_key: this.transitKey,
+            transit_tls_skip_verify: this.isTransitTlsSkipVerify,
           },
           extra: {
             title: this.$t("settings.configure_instance", {
@@ -675,6 +1127,45 @@ export default {
 .section-description {
   max-width: 38rem;
   margin-bottom: $spacing-05;
+  color: $text-02;
+}
+
+.field-label {
+  font-size: 0.75rem;
+  color: $text-02;
+  margin-bottom: $spacing-03;
+}
+
+.mapping-row {
+  display: flex;
+  align-items: flex-end;
+  gap: $spacing-03;
+  margin-bottom: $spacing-03;
+}
+
+.mapping-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.mapping-remove {
+  flex: none;
+}
+
+.snapshot-keep {
+  max-width: 12rem;
+}
+
+.break-word {
+  word-break: break-all;
+}
+
+.kit-item {
+  margin-bottom: $spacing-03;
+}
+
+.kit-description {
+  margin: 0 0 $spacing-03 $spacing-07;
   color: $text-02;
 }
 

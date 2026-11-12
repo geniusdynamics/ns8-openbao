@@ -75,6 +75,53 @@
         />
       </cv-column>
     </cv-row>
+    <cv-row v-if="openbao.seal_migration_from">
+      <cv-column>
+        <NsInlineNotification
+          kind="warning"
+          :title="
+            $t('status.migration_title', {
+              from: $t('status.unseal_mode_' + openbao.seal_migration_from),
+              to: $t('status.unseal_mode_' + openbao.unseal_mode),
+            })
+          "
+          :description="
+            openbao.migration
+              ? $t('status.migration_waiting_keys')
+              : $t('status.migration_finish', {
+                  command: migrationFinishCommand,
+                })
+          "
+          :showCloseButton="false"
+        />
+      </cv-column>
+    </cv-row>
+    <cv-row v-if="openbao.root_token_present">
+      <cv-column>
+        <NsInlineNotification
+          kind="warning"
+          :title="$t('status.root_token_title')"
+          :description="
+            $t('status.root_token_description', { command: rootTokensCommand })
+          "
+          :showCloseButton="false"
+        />
+      </cv-column>
+    </cv-row>
+    <cv-row v-if="openbao.initialized && openbao.module_token === 'missing'">
+      <cv-column>
+        <NsInlineNotification
+          kind="info"
+          :title="$t('status.module_token_title')"
+          :description="
+            $t('status.module_token_description', {
+              command: moduleTokenCommand,
+            })
+          "
+          :showCloseButton="false"
+        />
+      </cv-column>
+    </cv-row>
     <cv-row>
       <cv-column :md="4" :max="4">
         <NsInfoCard
@@ -433,6 +480,10 @@ export default {
         progress: 0,
         unseal_mode: "manual",
         user_domain: "",
+        module_token: "unknown",
+        root_token_present: null,
+        seal_migration_from: "",
+        migration: false,
         ui_url: "",
       },
       isOpenbaoStatusLoaded: false,
@@ -456,6 +507,15 @@ export default {
   },
   computed: {
     ...mapState(["instanceName", "instanceLabel", "core", "appName"]),
+    migrationFinishCommand() {
+      return `runagent -m ${this.instanceName} openbao-seal-migrate finish`;
+    },
+    rootTokensCommand() {
+      return `runagent -m ${this.instanceName} openbao-root-tokens --revoke`;
+    },
+    moduleTokenCommand() {
+      return `runagent -m ${this.instanceName} openbao-module-token create`;
+    },
     ldapLoginUrl() {
       // The OpenBao web UI preselects the auth method mounted at the path
       // given by the "with" query parameter

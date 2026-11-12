@@ -16,7 +16,11 @@
             "progress": 0,
             "unseal_mode": "manual",
             "ui_url": "https://vault.example.org/ui/",
-            "user_domain": "ad.example.org"
+            "user_domain": "ad.example.org",
+            "module_token": "valid",
+            "root_token_present": false,
+            "seal_migration_from": "",
+            "migration": false
         }
     ],
     "type": "object",
@@ -32,7 +36,11 @@
         "progress",
         "unseal_mode",
         "user_domain",
-        "ui_url"
+        "ui_url",
+        "module_token",
+        "root_token_present",
+        "seal_migration_from",
+        "migration"
     ],
     "properties": {
         "service_active": {
@@ -75,7 +83,8 @@
             "type": "string",
             "enum": [
                 "manual",
-                "auto"
+                "auto",
+                "transit"
             ]
         },
         "ui_url": {
@@ -85,6 +94,31 @@
         "user_domain": {
             "type": "string",
             "description": "User domain used for directory login; empty if disabled"
+        },
+        "module_token": {
+            "type": "string",
+            "enum": [
+                "missing",
+                "valid",
+                "invalid",
+                "unknown"
+            ],
+            "description": "State of the module token used for snapshots and root token detection"
+        },
+        "root_token_present": {
+            "type": [
+                "boolean",
+                "null"
+            ],
+            "description": "A root token exists; null if unknown (no module token, sealed, or too many tokens)"
+        },
+        "seal_migration_from": {
+            "type": "string",
+            "description": "Previous unseal mode while a seal migration (openbao-seal-migrate) is in progress; empty otherwise"
+        },
+        "migration": {
+            "type": "boolean",
+            "description": "OpenBao is waiting for keys with 'bao operator unseal -migrate'"
         }
     }
 }

@@ -5,6 +5,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 
+import ipaddress
 import json
 import os
 import sys
@@ -48,6 +49,7 @@ if requested_mode != current_mode and storage_state() != "uninitialized":
 # Directory login: the domain must exist and the administrators group must
 # be a visible group of that domain. A wrong group name would leave a
 # self-initialized OpenBao without administrators.
+params = None
 user_domain = request.get("user_domain", env["OPENBAO_USER_DOMAIN"])
 admin_group = request.get("ldap_admin_group", env["OPENBAO_LDAP_ADMIN_GROUP"]).strip()
 if user_domain:
@@ -67,11 +69,46 @@ if user_domain:
             print(agent.SD_ERR + f"LDAP query failed: {ex}", file=sys.stderr)
             fail("ldap_admin_group", admin_group, "ldap_admin_group_cannot_verify")
 
+for network in request.get("ip_allowlist", []):
+    try:
+        ipaddress.ip_network(network, strict=False)
+    except ValueError:
+        fail("ip_allowlist", network, "ip_allowlist_invalid")
+        break
+
+if user_domain:
+    for mapping in request.get("ldap_group_policies", []):
+        try:
+            from agent.ldapclient import Ldapclient
+            from agent.ldapclient.exceptions import LdapclientEntryNotFound
+            if params:
+                Ldapclient.factory(**params).get_group(mapping["group"])
+        except LdapclientEntryNotFound:
+            fail("ldap_group_policies", mapping["group"], "ldap_group_not_found")
+            break
+        except Exception as ex:
+            print(agent.SD_WARNING + f"Cannot verify group {mapping['group']}: {ex}", file=sys.stderr)
+
 if request.get("auto_initialize", False):
-    if requested_mode != "auto":
+    if not openbao.ldap_plugin_available() and not openbao.install_plugins().get("ldap"):
+        fail("auto_initialize", True, "ldap_plugin_missing")
+    elif requested_mode not in ("auto", "transit"):
         fail("auto_initialize", True, "auto_initialize_requires_auto_unseal")
     elif not user_domain:
         fail("auto_initialize", True, "auto_initialize_requires_user_domain")
+
+public = request.get("public_access", openbao.public_access(env))
+vpn_api = request.get("vpn_api", openbao.vpn_api_enabled(env))
+if not public and not vpn_api:
+    fail("public_access", False, "public_access_requires_vpn_api")
+
+if requested_mode == "transit":
+    if not request.get("transit_address", env["OPENBAO_TRANSIT_ADDRESS"]):
+        fail("transit_address", "", "transit_address_required")
+    if not request.get("transit_key", env["OPENBAO_TRANSIT_KEY"]):
+        fail("transit_key", "", "transit_key_required")
+    if not os.path.exists(openbao.TRANSIT_TOKEN_FILE):
+        fail("unseal_mode", requested_mode, "transit_token_missing")
 
 if errors:
     agent.set_status("validation-failed")

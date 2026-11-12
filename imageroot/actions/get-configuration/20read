@@ -22,6 +22,8 @@ except Exception as ex:
     print(agent.SD_WARNING + f"Cannot read the smarthost settings: {ex}", file=sys.stderr)
     smarthost_enabled = False
 
+vpn = openbao.vpn_api_endpoint(env)
+
 config = {
     "host": env.get("TRAEFIK_HOST", ""),
     "http2https": openbao.is_true(env["TRAEFIK_HTTP2HTTPS"]),
@@ -33,6 +35,19 @@ config = {
     "ldap_admin_group": env["OPENBAO_LDAP_ADMIN_GROUP"],
     "auto_initialize": openbao.is_true(env["OPENBAO_AUTO_INITIALIZE"]),
     "notify_recipients": openbao.notify_recipients(env),
+    "ip_allowlist": openbao.ip_allowlist(env),
+    "ldap_group_policies": openbao.ldap_group_policies(env),
+    "starter_kits": openbao.starter_kits(env),
+    "builtin_policies": sorted(openbao.BUILTIN_POLICIES),
+    "vpn_api": openbao.vpn_api_enabled(env),
+    "public_access": openbao.public_access(env),
+    "snapshot_keep": openbao.snapshot_keep(env),
+    "vpn_api_url": "http://{}:{}".format(*vpn) if vpn else "",
+    "transit_address": env["OPENBAO_TRANSIT_ADDRESS"],
+    "transit_mount": env["OPENBAO_TRANSIT_MOUNT"],
+    "transit_key": env["OPENBAO_TRANSIT_KEY"],
+    "transit_tls_skip_verify": openbao.is_true(env["OPENBAO_TRANSIT_TLS_SKIP_VERIFY"]),
+    "transit_token_present": os.path.exists(openbao.TRANSIT_TOKEN_FILE),
     # Read-only information for the Settings page. Only names: the bind
     # credentials and the smarthost password are never returned.
     "user_domains": openbao.list_user_domains(),

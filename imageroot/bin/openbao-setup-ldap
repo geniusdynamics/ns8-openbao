@@ -1,77 +1,10 @@
-#!/usr/bin/env python3
+#!/bin/bash
 
 #
 # Copyright (C) 2026 Genius Dynamics
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 
-#
-# Configure OpenBao directory login with the user domain and the
-# administrators group selected in the application settings. Run it on the
-# node, for an already initialized OpenBao:
-#
-#   runagent -m openbao1 openbao-setup-ldap
-#
-# The OpenBao token is read from the BAO_TOKEN environment variable or
-# prompted on the terminal. It must allow sys/policies/acl, sys/auth and
-# auth/ldap writes (a root token works). The token is used only for the
-# duration of this command: it is never stored nor sent through Redis.
-#
-# Run it again after the user domain bind credentials change.
-#
-
-import getpass
-import json
-import os
-import sys
-import urllib.error
-import openbao
-
-env = openbao.read_environment()
-domain = env["OPENBAO_USER_DOMAIN"]
-admin_group = env["OPENBAO_LDAP_ADMIN_GROUP"]
-
-if not domain or not admin_group:
-    sys.exit("Select a user domain and an administrators group in the application Settings first")
-
-params = openbao.discover_ldap(domain)
-if params is None:
-    sys.exit(f"User domain {domain} is not available")
-
-status = openbao.get_seal_status()
-if status is None:
-    sys.exit("OpenBao is not running")
-if not status.get("initialized"):
-    sys.exit("OpenBao is not initialized yet")
-if status.get("sealed"):
-    sys.exit("OpenBao is sealed: unseal it first")
-
-token = os.environ.get("BAO_TOKEN") or getpass.getpass("OpenBao token: ")
-if not token:
-    sys.exit("An OpenBao token is required")
-
-try:
-    mounts = openbao.api_request("sys/auth", token=token)
-except urllib.error.HTTPError as ex:
-    sys.exit(f"The token was refused: HTTP {ex.code}")
-
-mounts = mounts.get("data", mounts)
-for req in openbao.directory_login_requests(params, admin_group, params["bind_password"]):
-    if req["path"] == "sys/auth/ldap" and "ldap/" in mounts:
-        if mounts["ldap/"].get("type") != "ldap":
-            sys.exit("The ldap/ auth path is used by another auth method")
-        print("LDAP auth method already enabled")
-        continue
-    try:
-        openbao.api_request(req["path"], method="POST", data=req["data"], token=token)
-    except urllib.error.HTTPError as ex:
-        detail = ex.read().decode(errors="replace")
-        sys.exit(f"{req['name']} failed: HTTP {ex.code} {detail}")
-    print(f"{req['name']}: done")
-
-print(json.dumps({
-    "user_domain": domain,
-    "admin_group": admin_group,
-    "admin_policy": openbao.ADMIN_POLICY_NAME,
-    "login": "bao login -method=ldap username=<user>",
-}, indent=2))
+# Kept for compatibility with the 1.0.0 documentation: it now applies all
+# the token-protected settings, see openbao-apply-config.
+exec openbao-apply-config "$@"

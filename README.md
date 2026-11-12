@@ -26,8 +26,15 @@ The module runs OpenBao as a rootless container with:
 - [First-time setup](#first-time-setup)
 - [Unseal modes](#unseal-modes)
 - [Directory login (LDAP / Active Directory)](#directory-login-ldap--active-directory)
+- [Starter kits](#starter-kits)
+- [Applying settings that need a token](#applying-settings-that-need-a-token)
 - [Notifications and alerts](#notifications-and-alerts)
+- [Module token, snapshots and root tokens](#module-token-snapshots-and-root-tokens)
+- [Cluster network API](#cluster-network-api)
+- [Snapshots and restore](#snapshots-and-restore)
 - [Prometheus metrics](#prometheus-metrics)
+- [Not implemented on purpose](#not-implemented-on-purpose)
+- [High availability](#high-availability)
 - [Get the configuration and state](#get-the-configuration-and-state)
 - [Backup and restore](#backup-and-restore)
 - [Update](#update)
@@ -66,9 +73,12 @@ api-cli run configure-module --agent module/openbao1 --data - <<EOF
   "log_level": "info",
   "audit_log": true,
   "user_domain": "ad.example.org",
-  "ldap_admin_group": "Domain Admins",
+  "ldap_admin_group": "domain admins",
   "auto_initialize": false,
-  "notify_recipients": ["security@example.org"]
+  "notify_recipients": ["security@example.org"],
+  "ip_allowlist": ["192.168.1.0/24"],
+  "ldap_group_policies": [{"group": "Developers", "policy": "ns8-secrets-rw"}],
+  "starter_kits": ["kv", "pki"]
 }
 EOF
 ```
@@ -90,6 +100,24 @@ Parameters:
   OpenBao initialize itself with directory login already configured
 - `notify_recipients`: email addresses notified when OpenBao is down or
   sealed. `[]` disables them. See [Notifications](#notifications-and-alerts)
+
+- `ip_allowlist`: client IP addresses or networks (CIDR) allowed to reach
+  the API and web UI through Traefik. `[]` (default) allows everybody.
+  Applications that read secrets through the host name must be listed too
+- `ldap_group_policies`: more directory groups mapped to OpenBao policies,
+  see [Group policies](#group-policies)
+- `starter_kits`: components prepared at initialization, any of `kv`
+  (default), `pki`, `approle`; see [Starter kits](#starter-kits)
+- `vpn_api`: also publish the API on the cluster VPN, see
+  [Cluster network API](#cluster-network-api). Default `false`
+- `public_access`: publish the API and web UI through Traefik on `host`.
+  `false` makes OpenBao reachable only on the cluster network API (requires
+  `vpn_api`). Default `true`
+- `snapshot_keep`: daily Raft snapshots kept on the node, see
+  [Snapshots and restore](#snapshots-and-restore). Default `0` (disabled)
+- `transit_address`, `transit_mount` (default `transit`), `transit_key`,
+  `transit_tls_skip_verify`: settings of the `transit` unseal mode, see
+  [Unseal modes](#unseal-modes)
 
 Omitted optional parameters keep their current value.
 
@@ -225,7 +253,7 @@ changes later:
    with administrator rights (the root token works):
 
    ```bash
-   runagent -m openbao1 openbao-setup-ldap
+   runagent -m openbao1 openbao-apply-config
    ```
 
 3. Members of the administrators group can now use **Log in with
@@ -245,19 +273,46 @@ changes later:
 - **Unseal keys lost** (manual unseal): if fewer than the threshold remain,
   the data cannot be decrypted by anybody. Keep copies in separate safe
   places.
-- **Directory login broken and no recovery keys** (C without step 4): no
-  new administrator access can be created. Restore a backup or
-  reinitialize.
+- **Directory login broken after automatic initialization** (C): the
+  self-initialization also creates a **break-glass administrator token**
+  (`ns8-admin` policy), so a failed or wrong directory setup can never lock
+  everybody out. It never leaves the node and expires 32 days after the
+  initialization. Use it to repair the configuration or to generate
+  recovery keys, then revoke it:
+
+  ```bash
+  runagent -m openbao1 openbao-breakglass-token   # prints the token
+  export BAO_ADDR=https://vault.example.org BAO_TOKEN=<token>
+  bao operator rotate-keys -init -key-shares=5 -key-threshold=3 -target=recovery
+  bao token revoke -self
+  ```
+
+  Only the administrator policy and this token are mandatory steps of the
+  self-initialization; directory login and the key/value store are allowed
+  to fail, and the failure is logged.
 
 ## Unseal modes
 
-| | `manual` (default) | `auto` |
-|---|---|---|
-| Seal | Shamir key shares | `static` seal with a 32-byte key |
-| After restart, update or reboot | sealed: an operator enters the unseal keys | unseals itself |
-| Key storage | keys held by operators only | key generated on the node, `state/openbao-seal.key` (mode 0600), included in backups |
-| Backup consistency | live copy of the Raft storage | OpenBao stopped for a few seconds for a consistent copy |
-| Protection against disk or backup theft | yes | no: whoever holds the key file and the data can decrypt the secrets |
+| | `manual` (default) | `auto` | `transit` |
+|---|---|---|---|
+| Seal | Shamir key shares | `static` seal with a 32-byte key | Transit engine of an external OpenBao or Vault |
+| After restart, update or reboot | sealed: an operator enters the unseal keys | unseals itself | unseals itself while the external server is reachable |
+| Key storage | keys held by operators only | key generated on the node, `state/openbao-seal.key` (mode 0600), included in backups | key held by the external server; its token in `state/openbao-transit.token` (mode 0600), included in backups |
+| Backup consistency | live copy, or Raft snapshot with the module token | OpenBao stopped for a few seconds for a consistent copy | live copy, or Raft snapshot with the module token |
+| Protection against disk or backup theft | yes | no: whoever holds the key file and the data can decrypt the secrets | yes, if the external server is protected: revoke the token to make stolen copies useless |
+
+For `transit`, prepare the external server (a Transit key, and a token
+allowed to `update` `<mount>/encrypt/<key>` and `<mount>/decrypt/<key>`),
+store the token on the node, then select the mode in *Settings*:
+
+```bash
+runagent -m openbao1 openbao-transit-token
+```
+
+The token is never entered in the web UI, so it never passes through
+Redis; OpenBao renews it automatically. Another OpenBao instance of the
+cluster can be the Transit server, reached through its
+[cluster network API](#cluster-network-api).
 
 Choose `manual` when the stored secrets are sensitive enough to justify
 an operator unsealing OpenBao after every restart. Choose `auto` when
@@ -265,9 +320,24 @@ availability matters more and the node disk and backup repository are
 trusted.
 
 The seal type is written into the storage at initialization time, so
-`unseal_mode` is locked once OpenBao is initialized. Switching later
-requires an OpenBao [seal migration](https://openbao.org/docs/concepts/seal/#seal-migration),
-which is not automated by the module.
+`unseal_mode` is locked in *Settings* once OpenBao is initialized. To
+change it afterwards, run a [seal migration](https://openbao.org/docs/concepts/seal/#seal-migration)
+on the node. Take a backup first; the command also keeps a copy of the
+storage (`state/openbao-premigration-*.tar`):
+
+```bash
+runagent -m openbao1 openbao-seal-migrate start auto     # or: manual, transit --transit-address URL --transit-key KEY
+export BAO_ADDR=https://vault.example.org
+bao operator unseal -migrate                             # once per key, until the threshold
+runagent -m openbao1 openbao-seal-migrate finish
+```
+
+Provide the **unseal keys** when leaving manual unseal (they become the
+recovery keys), or the **recovery keys** when leaving automatic or Transit
+unseal (they become the unseal keys when moving to manual). The keys go
+straight to OpenBao. `openbao-seal-migrate status` and `abort` are
+available until OpenBao has applied the migration. OpenBao is unavailable
+for the duration of the migration.
 
 **Never delete or replace `state/openbao-seal.key`** of an instance using
 automatic unseal: without it the data cannot be decrypted.
@@ -286,6 +356,24 @@ Directory, or an external LDAP/AD domain) and an administrators group in
 - the `ns8-admin` policy, with full access, mapped to the administrators
   group
 
+### Default NethServer domain accounts
+
+Both NethServer account providers create a builtin group named
+**`domain admins`**, so it is the natural administrators group, and the
+*Settings* page and the setup wizard propose it:
+
+- **Internal OpenLDAP**: the *admuser* given when the domain is created
+  (for example `admin`) is created as a member of `domain admins`.
+- **Samba Active Directory**: with the user name `administrator`, the
+  builtin Samba administrator is used; with any other name, that user is
+  created, added to `domain admins`, and the builtin `administrator` is
+  disabled.
+
+There is no default password: it is the one typed when the domain was
+created. An external LDAP/AD domain has its own groups (for example
+`Domain Admins` in Active Directory). OpenBao matches group names without
+regard to case.
+
 Users log in with their domain account:
 
 ```bash
@@ -297,6 +385,15 @@ page, which opens the web UI with the LDAP method selected
 (`https://<host>/ui/vault/auth?with=ldap%2F`). Create further policies and
 map other groups with `auth/ldap/groups/<group>`.
 
+Since OpenBao 2.7 the LDAP auth method is not built into OpenBao: it is
+an external plugin from the [openbao-plugins](https://github.com/openbao/openbao-plugins)
+project. The module lists its pinned image
+(`ghcr.io/openbao/openbao-plugin-auth-ldap`) among the module images, so
+the node pulls it at install and update time, and OpenBao never downloads
+anything at startup. Before each start the binary is copied from the image
+into `state/openbao-plugins/` and declared in the server configuration
+with its version and SHA-256 checksum.
+
 How OpenBao gets this configuration depends on its state, see
 [First-time setup](#first-time-setup):
 
@@ -304,15 +401,76 @@ How OpenBao gets this configuration depends on its state, see
   requires automatic unseal and an uninitialized server. The module checks
   that the group exists before saving, because a wrong group would leave a
   self-initialized OpenBao without administrators.
-- **`openbao-setup-ldap`** ([setup D](#d-adding-directory-login-later)):
+- **`openbao-apply-config`** ([setup D](#d-adding-directory-login-later)):
   for an initialized server, or with manual unseal. The module cannot
   change OpenBao without an administrator token, and tokens must never
   pass through module actions: the command prompts for a token on the node
   (or reads `BAO_TOKEN`), applies the configuration and forgets the token.
 
+### Group policies
+
+Besides the administrators group (`ns8-admin`), map other directory
+groups to policies in *Settings*, *Group policies*. The module creates
+these built-in policies:
+
+| Policy | Access |
+|---|---|
+| `ns8-admin` | everything |
+| `ns8-secrets-rw` | read and write the `secret/` key/value store |
+| `ns8-secrets-ro` | read the `secret/` key/value store |
+| `ns8-pki-issuer` | issue certificates with the `pki/roles/ns8-server` role |
+
+The name of a policy created in OpenBao can be typed too. A group may
+appear in several rows to get several policies.
+
+> **Note:** when several policies of a token match a path, OpenBao applies
+> only the most specific path; it does not add their capabilities up
+> (capabilities are merged only for identical paths). `ns8-admin` repeats
+> the paths of the other built-in policies, so giving administrators a
+> built-in policy too never narrows their access. A custom policy with a
+> narrower path, mapped to a group the administrators belong to, does
+> narrow it: an administrator would then, for example, only read under
+> that path.
+
+Mappings need an administrator token to be written, so they are applied
+by the self-initialization or, on an initialized server, by
+`openbao-apply-config`. Run it again after changing them: it also removes
+the mappings it created before and that are no longer configured, and
+leaves mappings created by hand untouched.
+
 OpenBao keeps its own copy of the LDAP connection settings. If the domain
 bind credentials or servers change, the module logs a warning, sends a
-notification and asks to run `openbao-setup-ldap` again.
+notification and asks to run `openbao-apply-config` again.
+
+## Starter kits
+
+Choose in *Settings* (or in the wizard, for automatic initialization)
+what OpenBao should be prepared with:
+
+| Kit | Prepares |
+|---|---|
+| `kv` (default) | key/value version 2 store at `secret/` |
+| `pki` | internal root CA at `pki/` (EC P-384, 10 years), issuing and CRL URLs on the host name, and the `ns8-server` role (any name, server and client usage, 30 days, maximum 90) |
+| `approle` | the AppRole auth method at `approle/`, for applications and scripts |
+
+Kits are applied by the self-initialization, or on an initialized server
+by `openbao-apply-config`, which skips what already exists: an enabled
+mount or an existing PKI issuer is never changed. Unchecking a kit does
+not remove anything.
+
+## Applying settings that need a token
+
+The module never holds an OpenBao administrator token. Directory login,
+group policies and starter kits are written by the self-initialization
+or, afterwards, by this node command, which reads a token from the
+terminal (or from `BAO_TOKEN`), applies everything idempotently and
+forgets the token:
+
+```bash
+runagent -m openbao1 openbao-apply-config
+```
+
+`openbao-setup-ldap`, the command name of release 1.0.0, still works.
 
 ## Notifications and alerts
 
@@ -333,6 +491,83 @@ paths, both through the cluster SMTP smarthost (configured in the cluster
   minutes) and `OpenbaoNotInitialized` (warning, after 24 hours). They
   appear in the cluster alert list and are mailed to the cluster alert
   recipients.
+
+## Module token, snapshots and root tokens
+
+The module can hold a **module token**: a periodic OpenBao token with the
+narrow `ns8-module` policy, stored on the node (`state/openbao-module.token`,
+mode 0600), never returned by any action. It can take Raft snapshots and
+read token metadata (not tokens, not secrets); it cannot change the
+configuration or revoke anything. It is renewed daily by
+`openbao-maintenance.timer`. With it:
+
+- every backup includes `openbao.snap`, a **consistent Raft snapshot**
+  taken without stopping OpenBao (in all unseal modes)
+- the *Status* page warns when a **root token** is still active
+
+Self-initialization creates it automatically. For other instances, create
+it once with an administrator token:
+
+```bash
+runagent -m openbao1 openbao-module-token create
+runagent -m openbao1 openbao-module-token status     # valid / missing / invalid
+runagent -m openbao1 openbao-module-token revoke
+```
+
+List and revoke root tokens once other administrator access works:
+
+```bash
+runagent -m openbao1 openbao-root-tokens            # list
+runagent -m openbao1 openbao-root-tokens --revoke   # revoke, after confirmation
+```
+
+A snapshot can also be taken at any time with
+`runagent -m openbao1 openbao-snapshot /path/file.snap`.
+
+## Snapshots and restore
+
+Besides backups, the module can keep **daily Raft snapshots** on the node
+(`snapshot_keep`, *Settings*, *Snapshots*), to recover quickly from a
+deleted secret or a wrong change. They need the module token, are taken
+by `openbao-maintenance.timer`, are stored in `state/snapshots/` and are
+not part of backups. *Settings* lists them.
+
+Restoring replaces **all** OpenBao data and needs an administrator token,
+so it runs on the node:
+
+```bash
+runagent -m openbao1 openbao-snapshot-restore openbao-20261112-031500.snap
+```
+
+A snapshot of another OpenBao, for example the `openbao.snap` of a backup
+of a different instance, needs `--force`; OpenBao then seals itself and
+needs the unseal or recovery keys of the OpenBao that produced it.
+
+## Cluster network API
+
+To make OpenBao reachable **only** from the cluster, disable
+`public_access` (it requires `vpn_api`): the Traefik route is removed and
+`api_addr` points to the cluster network address. Clients using the host
+name stop working, so this is opt-in.
+
+
+With `vpn_api` enabled, the OpenBao API is also published on the third
+module TCP port, bound to the node cluster VPN address
+(`http://10.5.4.x:<port>`), for NethServer modules and services on other
+nodes. The traffic is encrypted by the cluster VPN (WireGuard). The
+public route through Traefik keeps working.
+
+The endpoint is published as an NS8 service provider, and the
+`openbao-changed` event is sent when it changes:
+
+```python
+rdb = agent.redis_connect(use_replica=True)
+providers = agent.list_service_providers(rdb, "openbao", "http")
+url = providers[0]["url"]   # e.g. http://10.5.4.1:20003
+```
+
+Instances installed with fewer TCP ports allocate the extra port when the
+option is first enabled (role `node:portsadm`).
 
 ## Prometheus metrics
 
@@ -365,6 +600,27 @@ The second port is in the module `TCP_PORTS` environment variable
 (`runagent -m openbao1 printenv TCP_PORTS`). Metrics are served only while
 OpenBao is initialized and unsealed; the module own `openbao_up`,
 `openbao_sealed` and `openbao_initialized` metrics cover the other states.
+
+## Not implemented on purpose
+
+Some convenient features would require sending secrets through NethServer
+actions. Action inputs and outputs are kept in Redis for hours and are
+readable by other modules, so these are left out; use the safe
+alternative:
+
+| Not implemented | Why | Safe alternative |
+|---|---|---|
+| Unseal from the NethServer UI (pasting key shares) | key shares would be stored in Redis | *Status*, **Open OpenBao**: the OpenBao web UI unseals over HTTPS; or `bao operator unseal` |
+| Initialize from the NethServer UI | unseal keys and the root token would be stored in Redis | the OpenBao web UI or `bao operator init` (setups A, B), or self-initialization (setup C) |
+| Revoke root tokens from the NethServer UI | needs an administrator token in an action | `openbao-root-tokens --revoke` on the node, or `bao token revoke -self` |
+| Enter the Transit token in the NethServer UI | the token would be stored in Redis | `openbao-transit-token` on the node |
+
+## High availability
+
+Each instance is a single-node Raft cluster. Joining instances into one
+highly available cluster is designed but not implemented yet, because it
+needs testing on a real multi-node cluster: see
+[docs/high-availability.md](docs/high-availability.md).
 
 ## Get the configuration and state
 
@@ -419,6 +675,34 @@ api-cli run update-module --data '{
 
 An update restarts OpenBao: with manual unseal it must be unsealed again.
 
+### Updating from 1.0.0
+
+Release 1.0.0 shipped with OpenBao 2.7, which no longer bundles the LDAP
+auth method. The update adds the pinned LDAP plugin image, a third TCP
+port (allocated when the cluster network API is enabled) and the new
+settings, which all start disabled or with their previous behaviour.
+
+- **Manual unseal** (A): the instance is updated in place. Unseal it again
+  after the update. Nothing else changes.
+- **Automatic unseal without automatic initialization** (B): updated in
+  place, it unseals itself.
+- **Automatic unseal with automatic initialization** (C): in 1.0.0 the
+  self-initialization failed at its first step, enabling LDAP login, and
+  OpenBao logs `self-initialization failed: refusing to unseal` at every
+  start. The update cannot repair that storage. Such an instance never
+  became usable (the root token was never shown and nobody could log
+  in), so it holds no secrets: after the update, reset it and let it
+  initialize itself again:
+
+  ```bash
+  runagent -m openbao1 openbao-reset-failed-init
+  ```
+
+  The command refuses to run unless OpenBao uses automatic unseal, is
+  initialized but sealed, and its log shows the self-initialization
+  failure. Removing the application and installing it again has the same
+  effect.
+
 ## Uninstall
 
 ```bash
@@ -431,6 +715,8 @@ All the stored secrets are deleted, unless a backup exists.
 
 - The OpenBao listener is bound to `127.0.0.1` on the node; TLS is
   terminated by Traefik. Leave `http2https` enabled.
+- Restrict the networks that can reach OpenBao with `ip_allowlist` when
+  its clients are known.
 - The container runs as the unprivileged `openbao` user, with all
   capabilities dropped and `no-new-privileges`.
 - `disable_mlock = true`: memory locking is not available to rootless

@@ -7,27 +7,26 @@
 
 #
 # A cluster VPN change happened. If the VPN address of this node changed,
-# publish the metrics listener on the new address and update the
-# Prometheus target. Restart OpenBao only in that case: with manual unseal
-# a restart seals it.
+# publish the metrics and cluster API listeners on the new address and
+# update the Prometheus target and the service provider record. Restart
+# OpenBao only in that case: with manual unseal a restart seals it.
 #
 
 import subprocess
 import sys
 import openbao
 
-endpoint = openbao.metrics_endpoint()
-expected = f"--publish={endpoint[0]}:{endpoint[1]}:{openbao.METRICS_CONTAINER_PORT}" if endpoint else ""
-
+expected = openbao.render_config(openbao.read_environment())["runtime_env_text"]
 try:
     with open(openbao.RUNTIME_ENV_FILE, encoding="utf-8") as rfile:
-        current = rfile.read().strip().split("=", 1)[-1]
+        current = rfile.read()
 except FileNotFoundError:
     sys.exit(0)  # never started
 
 if current == expected:
     sys.exit(0)
 
-print(f"<5>Metrics endpoint changed to {expected or 'none'}: restarting OpenBao", file=sys.stderr)
+print("<5>Cluster network endpoints changed: restarting OpenBao", file=sys.stderr)
 subprocess.run(["systemctl", "--user", "try-restart", "openbao.service"], check=False)
 subprocess.run(["openbao-publish-metrics-target"], check=False)
+subprocess.run(["openbao-publish-service"], check=False)

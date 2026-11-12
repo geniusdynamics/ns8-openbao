@@ -35,4 +35,4 @@ if status is not None:
     version = str(status.get("version", "")).replace("\\", "").replace('"', "")
     gauge("openbao_build_info", "OpenBao server version", 1, f'{{version="{version}"}}')
 gauge("openbao_auto_unseal", "Automatic unseal is configured",
-      1 if env["OPENBAO_UNSEAL_MODE"] == "auto" else 0)
+      1 if env["OPENBAO_UNSEAL_MODE"] in ("auto", "transit") else 0)

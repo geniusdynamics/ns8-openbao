@@ -63,8 +63,8 @@ export default {
         .map((r) => r.trim())
         .filter((r) => r);
     },
-    setupLdapCommand() {
-      return `runagent -m ${this.instanceName} openbao-setup-ldap`;
+    applyConfigCommand() {
+      return `runagent -m ${this.instanceName} openbao-apply-config`;
     },
   },
   methods: {
@@ -96,6 +96,21 @@ export default {
             this.domainGroups = taskResult.output.groups
               .map((g) => g.group)
               .sort();
+            // Both NethServer account providers (OpenLDAP and Samba AD)
+            // create the builtin "domain admins" group, with the
+            // administrator chosen at domain creation as its member:
+            // propose it when no group is configured yet. Set it after
+            // the options are rendered, or NsComboBox shows it empty.
+            const builtin = this.domainGroups.find(
+              (g) => g.toLowerCase() === "domain admins"
+            );
+            if (!this.ldapAdminGroup && builtin) {
+              this.$nextTick(() => {
+                if (!this.ldapAdminGroup) {
+                  this.ldapAdminGroup = builtin;
+                }
+              });
+            }
           }
           this.loading.listDomainGroups = false;
         }

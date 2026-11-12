@@ -133,6 +133,19 @@
               <li>{{ $t("wizard.auto_con") }}</li>
               <li>{{ $t("wizard.auto_when") }}</li>
             </ul>
+            <template
+              v-if="savedConfig && savedConfig.unseal_mode === 'transit'"
+            >
+              <cv-radio-button
+                :label="$t('settings.unseal_mode_transit')"
+                value="transit"
+                v-model="unsealMode"
+                :disabled="isInitialized"
+              />
+              <ul class="choice-details">
+                <li>{{ $t("wizard.transit_configured") }}</li>
+              </ul>
+            </template>
           </cv-radio-group>
           <NsInlineNotification
             v-if="error.unseal_mode"
@@ -199,6 +212,16 @@
                   v-model="isAutoInitializeEnabled"
                   :label="$t('settings.auto_initialize')"
                 />
+                <div v-if="isAutoInitializeEnabled" class="kits">
+                  <p class="kits-title">{{ $t("wizard.kits_title") }}</p>
+                  <NsCheckbox
+                    v-for="kit in starterKitList"
+                    :key="kit"
+                    :value="kit"
+                    v-model="starterKits"
+                    :label="$t('settings.kit_' + kit)"
+                  />
+                </div>
                 <NsInlineNotification
                   v-if="isAutoInitializeEnabled"
                   kind="warning"
@@ -355,7 +378,7 @@
               :feedback-aria-label="$t('settings.copied_to_clipboard')"
               hideExpandButton
               class="mg-bottom"
-              >{{ setupLdapCommand }}</NsCodeSnippet
+              >{{ applyConfigCommand }}</NsCodeSnippet
             >
             <NsButton
               kind="primary"
@@ -385,7 +408,7 @@
                 :feedback-aria-label="$t('settings.copied_to_clipboard')"
                 hideExpandButton
                 class="mg-bottom"
-                >{{ setupLdapCommand }}</NsCodeSnippet
+                >{{ applyConfigCommand }}</NsCodeSnippet
               >
             </template>
             <NsButton
@@ -441,6 +464,8 @@ export default {
       isAutoInitializeEnabled: true,
       notifyRecipients: "",
       testEmailResult: null,
+      starterKits: ["kv"],
+      starterKitList: ["kv", "pki", "approle"],
       outcome: "",
       loading: {
         getConfiguration: false,
@@ -476,7 +501,9 @@ export default {
       return !!(this.openbaoStatus && this.openbaoStatus.initialized);
     },
     canAutoInitialize() {
-      return this.unsealMode === "auto" && !this.isInitialized;
+      return (
+        ["auto", "transit"].includes(this.unsealMode) && !this.isInitialized
+      );
     },
     domainOptions() {
       // "none" is offered by the toggle in the wizard
@@ -556,6 +583,16 @@ export default {
           label: this.$t("wizard.review_auto_initialize"),
           value: this.isAutoInitializeEnabled ? yes : no,
         });
+        if (this.isAutoInitializeEnabled) {
+          items.push({
+            label: this.$t("settings.section_starter_kits"),
+            value: this.starterKits.length
+              ? this.starterKits
+                  .map((k) => this.$t("settings.kit_" + k))
+                  .join(", ")
+              : no,
+          });
+        }
       }
       items.push({
         label: this.$t("settings.notify_recipients"),
@@ -630,16 +667,21 @@ export default {
           this.isLetsEncryptEnabled = config.host ? config.lets_encrypt : true;
           this.isHttpToHttpsEnabled = config.host ? config.http2https : true;
           this.unsealMode = config.unseal_mode;
-          this.userDomain = config.user_domain;
-          this.ldapAdminGroup = config.ldap_admin_group;
+          // NsComboBox resolves a new value against its current options:
+          // set the values after the options are rendered
+          this.$nextTick(() => {
+            this.userDomain = config.user_domain;
+            this.ldapAdminGroup = config.ldap_admin_group;
+            if (this.userDomain) {
+              this.listDomainGroups();
+            }
+          });
           this.isDirectoryEnabled = !!config.user_domain;
           this.isAutoInitializeEnabled = config.host
             ? config.auto_initialize
             : true;
           this.notifyRecipients = config.notify_recipients.join(", ");
-          if (this.userDomain) {
-            this.listDomainGroups();
-          }
+          this.starterKits = [...config.starter_kits];
           this.loading.getConfiguration = false;
         },
         () => {
@@ -769,6 +811,7 @@ export default {
             ldap_admin_group: directory ? this.ldapAdminGroup : "",
             auto_initialize: selfInitialize,
             notify_recipients: this.recipientList,
+            starter_kits: this.starterKits,
           },
           extra: {
             title: this.$t("settings.configure_instance", {
@@ -850,6 +893,15 @@ export default {
 
 .choice-details li {
   margin-bottom: $spacing-02;
+}
+
+.kits {
+  margin: $spacing-05 0 $spacing-05 $spacing-07;
+}
+
+.kits-title {
+  margin-bottom: $spacing-03;
+  color: $text-02;
 }
 
 .review-list {

@@ -1,0 +1,23 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# Save a Raft snapshot with the module token:
+#
+#   runagent -m openbao1 openbao-snapshot [FILE]     (default: openbao.snap)
+#
+# Exit code 1 if there is no module token or OpenBao is sealed.
+#
+
+import sys
+import openbao
+
+path = sys.argv[1] if len(sys.argv) > 1 else openbao.SNAPSHOT_FILE
+status = openbao.get_seal_status()
+if not openbao.read_module_token() or not status or status.get("sealed"):
+    sys.exit(1)
+sys.exit(0 if openbao.save_snapshot(path) else 1)

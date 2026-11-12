@@ -16,10 +16,10 @@ Bao Request
     ${output}  ${rc} =    Execute Command    curl -sS -f -X ${method} -H 'Host: ${host}' ${token_header} ${data_arg} http://127.0.0.1/v1/${path}
     ...    return_rc=True
     Should Be Equal As Integers    ${rc}  0
-    IF    '''${output}''' == ''
+    IF    $output == ''
         RETURN    &{EMPTY}
     END
-    &{response} =    Evaluate    json.loads('''${output}''')    modules=json
+    &{response} =    Evaluate    json.loads($output)    modules=json
     RETURN    &{response}
 
 Seal Status
@@ -36,3 +36,31 @@ OpenBao Should Be Active
     ${rc} =    Execute Command    curl -sS -f -o /dev/null -H 'Host: ${host}' http://127.0.0.1/v1/sys/health
     ...    return_rc=True  return_stdout=False
     Should Be Equal As Integers    ${rc}  0
+
+Route Should Be Forbidden
+    [Arguments]    ${host}
+    ${output}  ${rc} =    Execute Command    curl -sS -o /dev/null -w '\%{http_code}' -H 'Host: ${host}' http://127.0.0.1/v1/sys/seal-status
+    ...    return_rc=True
+    Should Be Equal    ${output}    403
+
+Execute Command And Expect Success
+    [Arguments]    ${command}
+    ${rc} =    Execute Command    ${command}
+    ...    return_rc=True  return_stdout=False
+    Should Be Equal As Integers    ${rc}  0
+
+Unseal If Sealed
+    [Arguments]    ${host}    ${key}
+    &{status} =    Seal Status    ${host}
+    IF    ${status.sealed}
+        Unseal OpenBao    ${host}    ${key}
+    END
+
+Seal Status Should Be Sealed
+    [Arguments]    ${host}
+    &{status} =    Seal Status    ${host}
+    Should Be Equal    ${status.sealed}    ${True}
+
+Remove IP Allow-list
+    [Arguments]    ${module_id}    ${host}
+    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host": "${host}", "http2https": false, "ip_allowlist": []}'

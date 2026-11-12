@@ -25,6 +25,16 @@ request = {
     "audit_log": openbao.is_true(env["OPENBAO_AUDIT_LOG"]),
     "unseal_mode": env["OPENBAO_UNSEAL_MODE"],
     "notify_recipients": openbao.notify_recipients(env),
+    "ip_allowlist": openbao.ip_allowlist(env),
+    "starter_kits": openbao.starter_kits(env),
+    "vpn_api": openbao.vpn_api_enabled(env),
+    "public_access": openbao.public_access(env),
+    "snapshot_keep": openbao.snapshot_keep(env),
+    "transit_address": env["OPENBAO_TRANSIT_ADDRESS"],
+    "transit_mount": env["OPENBAO_TRANSIT_MOUNT"],
+    "transit_key": env["OPENBAO_TRANSIT_KEY"],
+    "transit_tls_skip_verify": openbao.is_true(env["OPENBAO_TRANSIT_TLS_SKIP_VERIFY"]),
+    "ldap_group_policies": [],
     "user_domain": "",
     "ldap_admin_group": "",
 }
@@ -35,6 +45,7 @@ domain = env["OPENBAO_USER_DOMAIN"]
 if domain and domain in [d["name"] for d in openbao.list_user_domains()]:
     request["user_domain"] = domain
     request["ldap_admin_group"] = env["OPENBAO_LDAP_ADMIN_GROUP"]
+    request["ldap_group_policies"] = openbao.ldap_group_policies(env)
 elif domain:
     print(f"<4>User domain {domain} is not available: directory login binding dropped", file=sys.stderr)
 
@@ -44,5 +55,6 @@ if configure_retval["exit_code"] != 0 and request["user_domain"]:
     print("<4>configure-module failed with directory login: retrying without it", file=sys.stderr)
     request["user_domain"] = ""
     request["ldap_admin_group"] = ""
+    request["ldap_group_policies"] = []
     configure_retval = agent.tasks.run(agent_id=os.environ["AGENT_ID"], action="configure-module", data=request)
 agent.assert_exp(configure_retval["exit_code"] == 0, "The configure-module subtask failed!")

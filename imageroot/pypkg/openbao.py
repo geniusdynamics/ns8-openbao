@@ -32,11 +32,17 @@ INIT_FILE = CONFIG_DIR + "/ns8-initialize.json"  # self-initialization requests
 CONTAINER_ENV_FILE = "openbao-container.env"
 RUNTIME_ENV_FILE = "openbao-runtime.env"  # podman arguments for openbao.service
 SEAL_KEY_FILE = "openbao-seal.key"
+PLUGIN_DIR = "openbao-plugins"  # mounted read-only on /openbao/plugins
+PLUGIN_STATE_FILE = "openbao-plugins.json"
+BREAKGLASS_TOKEN_FILE = "openbao-breakglass.token"
+MODULE_TOKEN_FILE = "openbao-module.token"
+TRANSIT_TOKEN_FILE = "openbao-transit.token"
+SNAPSHOT_FILE = "openbao.snap"
 
 DATA_VOLUME = "openbao-data"
 
 LOG_LEVELS = ["trace", "debug", "info", "warn", "error"]
-UNSEAL_MODES = ["manual", "auto"]
+UNSEAL_MODES = ["manual", "auto", "transit"]
 DEFAULTS = {
     "OPENBAO_LOG_LEVEL": "info",
     "OPENBAO_AUDIT_LOG": "False",
@@ -46,7 +52,23 @@ DEFAULTS = {
     "OPENBAO_LDAP_ADMIN_GROUP": "",
     "OPENBAO_AUTO_INITIALIZE": "False",
     "OPENBAO_NOTIFY_RECIPIENTS": "",
+    "OPENBAO_IP_ALLOWLIST": "",
+    "OPENBAO_LDAP_GROUP_POLICIES": "",
+    "OPENBAO_STARTER_KITS": "kv",
+    "OPENBAO_VPN_API": "False",
+    "OPENBAO_TRANSIT_ADDRESS": "",
+    "OPENBAO_TRANSIT_MOUNT": "transit",
+    "OPENBAO_TRANSIT_KEY": "",
+    "OPENBAO_TRANSIT_TLS_SKIP_VERIFY": "False",
+    "OPENBAO_PUBLIC_ACCESS": "True",
+    "OPENBAO_SNAPSHOT_KEEP": "0",
+    "OPENBAO_SEAL_MIGRATION_FROM": "",
 }
+
+SNAPSHOT_DIR = "snapshots"  # scheduled local snapshots, not in backups
+
+STARTER_KITS = ["kv", "pki", "approle"]
+APPLIED_GROUPS_FILE = "openbao-ldap-groups-applied.json"
 
 # Policy granted to the directory group of OpenBao administrators
 ADMIN_POLICY_NAME = "ns8-admin"
@@ -56,7 +78,84 @@ path "*" {
   capabilities = ["create", "read", "update", "patch", "delete", "list", "scan", "sudo"]
 }
 """
+# OpenBao applies only the most specific matching path of a token's
+# policies; capabilities are merged only for identical paths. Repeat the
+# paths of the built-in policies with full capabilities, so that mapping
+# one of them to an administrator never narrows their access.
+ADMIN_POLICY += "".join(f"""path "{path}" {{
+  capabilities = ["create", "read", "update", "patch", "delete", "list", "scan", "sudo"]
+}}
+""" for path in ("secret/data/*", "secret/metadata/*", "pki/issue/ns8-server", "pki/cert/ca"))
+# Policies created by the module, offered in the group mapping table
+BUILTIN_POLICIES = {
+    "ns8-admin": ADMIN_POLICY,
+    "ns8-secrets-rw": """# Read and write the secret/ key/value (v2) store
+path "secret/data/*" {
+  capabilities = ["create", "read", "update", "patch", "delete", "list"]
+}
+path "secret/metadata/*" {
+  capabilities = ["read", "list", "delete"]
+}
+""",
+    "ns8-secrets-ro": """# Read the secret/ key/value (v2) store
+path "secret/data/*" {
+  capabilities = ["read", "list"]
+}
+path "secret/metadata/*" {
+  capabilities = ["read", "list"]
+}
+""",
+    "ns8-pki-issuer": """# Issue certificates with the role of the internal PKI starter kit
+path "pki/issue/ns8-server" {
+  capabilities = ["create", "update"]
+}
+path "pki/cert/ca" {
+  capabilities = ["read"]
+}
+""",
+}
+
+# Narrow policy of the module token: consistent backups (Raft snapshots),
+# root token detection and Raft status. It cannot read secrets, change the
+# configuration or revoke tokens.
+MODULE_POLICY_NAME = "ns8-module"
+MODULE_POLICY = """# Token held by the NethServer 8 module, on the node only
+path "sys/storage/raft/snapshot" {
+  capabilities = ["read"]
+}
+path "sys/storage/raft/configuration" {
+  capabilities = ["read"]
+}
+path "auth/token/accessors" {
+  capabilities = ["list", "sudo"]
+}
+path "auth/token/lookup-accessor" {
+  capabilities = ["update"]
+}
+"""
+MODULE_TOKEN_VAR = "NS8_MODULE_TOKEN"
+MODULE_TOKEN_PERIOD = "768h"
+
 LDAP_BIND_PASSWORD_VAR = "NS8_LDAP_BIND_PASSWORD"
+BREAKGLASS_TOKEN_VAR = "NS8_BREAKGLASS_TOKEN"
+# The break-glass token expires by itself: the token store maximum TTL
+BREAKGLASS_TOKEN_TTL = "768h"
+
+# External plugins. Since OpenBao 2.7 the LDAP auth method is no longer
+# built in: it is distributed as an OCI image by the openbao-plugins
+# project. The image is listed in the org.nethserver.images label, so the
+# node pulls it with the module (no download at OpenBao startup) and
+# Renovate tracks its version. The binary is copied from the image into
+# PLUGIN_DIR by install_plugins() and declared in the server configuration.
+PLUGINS = [
+    {
+        "name": "ldap",
+        "type": "auth",
+        "image_var": "OPENBAO_PLUGIN_AUTH_LDAP_IMAGE",
+        "command": "openbao-plugin-auth-ldap",
+    },
+]
+PLUGIN_CONTAINER_DIR = "/openbao/plugins"
 # Podman translates this address to the node loopback interface, where
 # the NS8 ldapproxy listens (slirp4netns allow_host_loopback=true)
 HOST_LOOPBACK_ADDR = "10.0.2.2"
@@ -161,6 +260,227 @@ def ensure_seal_key():
 
 def _hcl_string(value):
     return json.dumps(str(value))
+
+
+def _image_version(image):
+    """Return the tag of an image URL, e.g. "v0.2.0", or ""."""
+    name = image.split("@", 1)[0]
+    last = name.rsplit("/", 1)[-1]
+    return last.rsplit(":", 1)[1] if ":" in last else ""
+
+
+def _sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as bfile:
+        for chunk in iter(lambda: bfile.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _read_plugin_state():
+    try:
+        with open(PLUGIN_STATE_FILE, encoding="utf-8") as sfile:
+            return json.load(sfile)
+    except (FileNotFoundError, ValueError):
+        return {}
+
+
+def install_plugins():
+    """Copy the external plugin binaries from their images into PLUGIN_DIR.
+
+    It runs before OpenBao starts. A binary is extracted again only when
+    its image changes. Return the dict of installed plugins.
+    """
+    env = read_environment()
+    os.makedirs(PLUGIN_DIR, mode=0o755, exist_ok=True)
+    os.chmod(PLUGIN_DIR, 0o755)
+    state = _read_plugin_state()
+    installed = {}
+    for plugin in PLUGINS:
+        image = env.get(plugin["image_var"]) or os.environ.get(plugin["image_var"], "")
+        version = _image_version(image)
+        if not image or not version:
+            log(f"Plugin {plugin['name']}: image not available", "<4>")
+            continue
+        proc = subprocess.run(["podman", "image", "inspect", "--format", "{{.Id}}", image],
+                              capture_output=True, text=True, check=False)
+        if proc.returncode != 0:
+            log(f"Plugin {plugin['name']}: image {image} is not present on this node", "<4>")
+            continue
+        image_id = proc.stdout.strip()
+        target = os.path.join(PLUGIN_DIR, plugin["command"])
+        record = state.get(plugin["name"], {})
+        if record.get("image_id") == image_id and os.path.exists(target) \
+                and _sha256_file(target) == record.get("sha256"):
+            installed[plugin["name"]] = record
+            continue
+        container = f"openbao-plugin-{plugin['name']}-extract"
+        tmp_target = os.path.join(PLUGIN_DIR, f".{plugin['command']}.tmp")
+        try:
+            subprocess.run(["podman", "create", "--replace", "--name", container, image],
+                           check=True, capture_output=True, text=True)
+            subprocess.run(["podman", "cp", f"{container}:/{plugin['command']}", tmp_target],
+                           check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as ex:
+            log(f"Plugin {plugin['name']}: cannot extract the binary: {ex.stderr.strip()}", "<3>")
+            continue
+        finally:
+            subprocess.run(["podman", "rm", "--force", "--ignore", container],
+                           check=False, capture_output=True)
+        # The OpenBao user inside the container must be able to execute it
+        os.chmod(tmp_target, 0o755)
+        os.replace(tmp_target, target)
+        record = {
+            "type": plugin["type"],
+            "command": plugin["command"],
+            "version": version,
+            "sha256": _sha256_file(target),
+            "image_id": image_id,
+        }
+        installed[plugin["name"]] = record
+        log(f"Plugin {plugin['name']} {version} installed")
+    _write_file(PLUGIN_STATE_FILE, json.dumps(installed, indent=2) + "\n", 0o644)
+    return installed
+
+
+def declared_plugins():
+    """Return {name: record} of the installed plugins with a valid binary."""
+    plugins = {}
+    for name, record in _read_plugin_state().items():
+        path = os.path.join(PLUGIN_DIR, record.get("command", ""))
+        try:
+            if _sha256_file(path) == record.get("sha256"):
+                plugins[name] = record
+        except OSError:
+            continue
+    return plugins
+
+
+def ldap_plugin_available():
+    return "ldap" in declared_plugins()
+
+
+def ensure_breakglass_token():
+    """Return the break-glass token ID, creating it once.
+
+    Self-initialization creates an administrator token with this ID, so a
+    failure of the directory login setup can never lock everybody out. The
+    token never leaves the node: read it with openbao-breakglass-token.
+    """
+    if not os.path.exists(BREAKGLASS_TOKEN_FILE):
+        token = "ns8bg" + secrets.token_hex(24)  # no "." allowed in custom IDs
+        fd = os.open(BREAKGLASS_TOKEN_FILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as tfile:
+            tfile.write(token + "\n")
+    with open(BREAKGLASS_TOKEN_FILE, encoding="utf-8") as tfile:
+        return tfile.read().strip()
+
+
+def ensure_module_token_id():
+    """Return the ID of the module token created by self-initialization."""
+    if not os.path.exists(MODULE_TOKEN_FILE):
+        write_secret_file(MODULE_TOKEN_FILE, "ns8mod" + secrets.token_hex(24))
+    return read_module_token()
+
+
+def write_secret_file(path, value):
+    """Atomically write an owner-only file with a single value."""
+    _write_file(path, value.strip() + "\n", 0o600)
+
+
+def read_module_token():
+    try:
+        with open(MODULE_TOKEN_FILE, encoding="utf-8") as tfile:
+            return tfile.read().strip()
+    except FileNotFoundError:
+        return ""
+
+
+def module_token_status():
+    """Return "missing", "valid", "invalid" or "unknown" (server unreachable)."""
+    token = read_module_token()
+    if not token:
+        return "missing"
+    try:
+        api_request("auth/token/lookup-self", token=token, timeout=5)
+        return "valid"
+    except urllib.error.HTTPError as ex:
+        return "invalid" if ex.code in (400, 403) else "unknown"
+    except (urllib.error.URLError, OSError, ValueError):
+        return "unknown"
+
+
+def root_token_present(limit=500):
+    """Return True if a root token exists, False if not, None if unknown.
+
+    Uses the module token: lists the token accessors (not the tokens) and
+    looks them up until a root token is found.
+    """
+    token = read_module_token()
+    if not token:
+        return None
+    try:
+        listing = api_request("auth/token/accessors", method="LIST", token=token, timeout=10)
+        accessors = listing.get("data", {}).get("keys", [])
+        if len(accessors) > limit:
+            return None
+        for accessor in accessors:
+            info = api_request("auth/token/lookup-accessor", method="POST",
+                               data={"accessor": accessor}, token=token, timeout=5)
+            if "root" in info.get("data", {}).get("policies", []):
+                return True
+        return False
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
+def save_snapshot(path=SNAPSHOT_FILE):
+    """Save a Raft snapshot with the module token. Return True on success."""
+    token = read_module_token()
+    if not token:
+        return False
+    url = f"http://127.0.0.1:{os.environ['TCP_PORT']}/v1/sys/storage/raft/snapshot"
+    req = urllib.request.Request(url, headers={"X-Vault-Token": token})
+    tmp_path = path + ".tmp"
+    try:
+        with _opener().open(req, timeout=300) as resp, \
+                open(os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as sfile:
+            while True:
+                chunk = resp.read(1 << 20)
+                if not chunk:
+                    break
+                sfile.write(chunk)
+        os.replace(tmp_path, path)
+        return True
+    except (urllib.error.URLError, OSError) as ex:
+        log(f"Raft snapshot failed: {ex}", "<4>")
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        return False
+
+
+def vpn_api_enabled(env):
+    return is_true(env.get("OPENBAO_VPN_API", "False"))
+
+
+def vpn_api_port(env):
+    """Return the TCP port of the cluster network API listener, or None."""
+    ports = os.environ.get("TCP_PORTS", "").split(",")
+    if len(ports) >= 3 and ports[2].strip().isdigit():
+        return int(ports[2])
+    value = env.get("OPENBAO_VPN_API_PORT", "")
+    return int(value) if value.isdigit() else None
+
+
+def vpn_api_endpoint(env):
+    """Return (address, port) of the cluster network API, or None."""
+    if not vpn_api_enabled(env):
+        return None
+    port = vpn_api_port(env)
+    address = node_vpn_address() if port else None
+    if not port or not address:
+        return None
+    return address, port
 
 
 def discover_ldap(domain):
@@ -278,8 +598,14 @@ def directory_login_requests(params, admin_group, bindpass, container=True):
     ]
 
 
-def render_initialize(params, admin_group):
-    """Return the JSON text of the self-initialization configuration."""
+def render_initialize(params, env):
+    """Return the JSON text of the self-initialization configuration.
+
+    If any request fails without allow_failure, OpenBao stays initialized
+    but refuses to unseal: only the admin policy and the break-glass token
+    are mandatory, and both are purely local operations. Everything else
+    may fail; the break-glass token then lets an administrator fix it.
+    """
     bindpass = {
         "eval_source": "env",
         "eval_type": "string",
@@ -287,16 +613,69 @@ def render_initialize(params, admin_group):
         "require_present": True,
     }
     requests = []
-    for req in directory_login_requests(params, admin_group, bindpass):
+
+    def add(req, allow_failure):
         body = {"operation": req["operation"], "path": req["path"], "data": req["data"]}
+        if allow_failure:
+            body["allow_failure"] = True
         requests.append({req["name"]: body})
-    # A ready-to-use key/value store; not essential, so it may fail
-    requests.append({"ns8-kv-mount": {
+
+    login = directory_login_requests(params, env["OPENBAO_LDAP_ADMIN_GROUP"], bindpass)
+    # 1. administrator policy (mandatory)
+    add(login[0], False)
+    # 2. break-glass administrator token (mandatory)
+    add({
+        "name": "ns8-breakglass-token",
         "operation": "update",
-        "path": "sys/mounts/secret",
-        "data": {"type": "kv", "description": "Key/value secrets", "options": {"version": "2"}},
-        "allow_failure": True,
-    }})
+        "path": "auth/token/create-orphan",
+        "data": {
+            "id": {
+                "eval_source": "env",
+                "eval_type": "string",
+                "env_var": BREAKGLASS_TOKEN_VAR,
+                "require_present": True,
+            },
+            "policies": [ADMIN_POLICY_NAME],
+            "display_name": "ns8-breakglass",
+            "ttl": BREAKGLASS_TOKEN_TTL,
+            "renewable": False,
+        },
+    }, False)
+    # 3. module token for snapshots and root token detection (allowed to fail)
+    add({
+        "name": "ns8-module-policy",
+        "operation": "update",
+        "path": f"sys/policies/acl/{MODULE_POLICY_NAME}",
+        "data": {"policy": MODULE_POLICY},
+    }, True)
+    add({
+        "name": "ns8-module-token",
+        "operation": "update",
+        "path": "auth/token/create-orphan",
+        "data": {
+            "id": {
+                "eval_source": "env",
+                "eval_type": "string",
+                "env_var": MODULE_TOKEN_VAR,
+                "require_present": True,
+            },
+            "policies": [MODULE_POLICY_NAME],
+            "display_name": "ns8-module",
+            "period": MODULE_TOKEN_PERIOD,
+            "renewable": True,
+        },
+    }, True)
+    # 4. the other built-in policies, directory login, group mappings and
+    #    starter kits (allowed to fail)
+    for req in policy_requests():
+        if req["path"] != login[0]["path"]:
+            add(req, True)
+    add(login[1], True)  # ldap auth mount
+    add(login[2], True)  # ldap auth configuration
+    for req in group_requests(group_policy_map(env)):
+        add(req, True)
+    for req in kit_requests(starter_kits(env), env.get("TRAEFIK_HOST", "")):
+        add(req, True)
     return json.dumps({"initialize": [{"ns8-directory-login": {"request": requests}}]}, indent=2) + "\n"
 
 
@@ -328,9 +707,62 @@ def metrics_endpoint():
     return address, port
 
 
+def seal_stanza(env, mode, container_env, disabled=False):
+    """Return the HCL lines of an auto seal, adding its secrets to container_env."""
+    lines = [""]
+    if mode == "transit":
+        lines.append('seal "transit" {')
+        lines.append(f"  address         = {_hcl_string(env['OPENBAO_TRANSIT_ADDRESS'])}")
+        lines.append(f"  mount_path      = {_hcl_string(env['OPENBAO_TRANSIT_MOUNT'] or 'transit')}")
+        lines.append(f"  key_name        = {_hcl_string(env['OPENBAO_TRANSIT_KEY'])}")
+        lines.append(f"  tls_skip_verify = {_hcl_string(str(is_true(env['OPENBAO_TRANSIT_TLS_SKIP_VERIFY'])).lower())}")
+        try:
+            with open(TRANSIT_TOKEN_FILE, encoding="utf-8") as tfile:
+                # The seal renews this token by itself
+                container_env.append(f"BAO_TOKEN={tfile.read().strip()}")
+        except FileNotFoundError:
+            log("Transit seal: no token, run openbao-transit-token", "<3>")
+    else:
+        key_id, key_hex = ensure_seal_key()
+        lines.append('seal "static" {')
+        lines.append(f"  current_key_id = {_hcl_string(key_id)}")
+        lines.append('  current_key    = "env://BAO_STATIC_SEAL_CURRENT_KEY"')
+        container_env.append(f"BAO_STATIC_SEAL_CURRENT_KEY_ID={key_id}")
+        container_env.append(f"BAO_STATIC_SEAL_CURRENT_KEY={key_hex}")
+    if disabled:
+        lines.append('  disabled        = "true"')
+    lines.append("}")
+    return lines
+
+
+def public_access(env):
+    return is_true(env.get("OPENBAO_PUBLIC_ACCESS", "True"))
+
+
+def snapshot_keep(env):
+    value = env.get("OPENBAO_SNAPSHOT_KEEP", "0")
+    return int(value) if value.isdigit() else 0
+
+
+def list_snapshots():
+    """Return [{name, size, created}] of the scheduled snapshots, newest first."""
+    snapshots = []
+    try:
+        names = os.listdir(SNAPSHOT_DIR)
+    except FileNotFoundError:
+        return []
+    for name in names:
+        if not name.endswith(".snap"):
+            continue
+        path = os.path.join(SNAPSHOT_DIR, name)
+        stat = os.stat(path)
+        snapshots.append({"name": name, "size": stat.st_size, "created": int(stat.st_mtime)})
+    return sorted(snapshots, key=lambda s: s["created"], reverse=True)
+
+
 def auto_initialize_wanted(env):
     return (
-        env["OPENBAO_UNSEAL_MODE"] == "auto"
+        env["OPENBAO_UNSEAL_MODE"] in ("auto", "transit")
         and is_true(env["OPENBAO_AUTO_INITIALIZE"])
         and bool(env["OPENBAO_USER_DOMAIN"])
         and bool(env["OPENBAO_LDAP_ADMIN_GROUP"])
@@ -347,6 +779,10 @@ def render_config(env):
     """
     host = env.get("TRAEFIK_HOST", "")
     api_addr = f"https://{host}" if host else "http://127.0.0.1:8200"
+    if not public_access(env):
+        vpn_api = vpn_api_endpoint(env)
+        if vpn_api:
+            api_addr = f"http://{vpn_api[0]}:{vpn_api[1]}"
     unseal_mode = env["OPENBAO_UNSEAL_MODE"]
     log_level = env["OPENBAO_LOG_LEVEL"]
     if log_level not in LOG_LEVELS:
@@ -392,16 +828,30 @@ def render_config(env):
     static_part.append("  disable_hostname          = true")
     static_part.append("}")
 
-    container_env = []
-    if unseal_mode == "auto":
-        key_id, key_hex = ensure_seal_key()
+    plugins = declared_plugins()
+    if plugins:
         static_part.append("")
-        static_part.append('seal "static" {')
-        static_part.append(f"  current_key_id = {_hcl_string(key_id)}")
-        static_part.append('  current_key    = "env://BAO_STATIC_SEAL_CURRENT_KEY"')
-        static_part.append("}")
-        container_env.append(f"BAO_STATIC_SEAL_CURRENT_KEY_ID={key_id}")
-        container_env.append(f"BAO_STATIC_SEAL_CURRENT_KEY={key_hex}")
+        static_part.append(f"plugin_directory = {_hcl_string(PLUGIN_CONTAINER_DIR)}")
+        # Set explicitly: OpenBao merges the files of the configuration
+        # directory into an empty base, which turns the documented default
+        # (true) into false when the value is omitted.
+        static_part.append("plugin_auto_register = true")
+        for name in sorted(plugins):
+            record = plugins[name]
+            static_part.append(f"plugin {_hcl_string(record['type'])} {_hcl_string(name)} {{")
+            static_part.append(f"  command   = {_hcl_string(record['command'])}")
+            static_part.append(f"  version   = {_hcl_string(record['version'])}")
+            static_part.append(f"  sha256sum = {_hcl_string(record['sha256'])}")
+            static_part.append("}")
+
+    container_env = []
+    # During a seal migration the previous auto seal stays configured with
+    # disabled = "true", next to the new seal (none for Shamir/manual).
+    migrate_from = env.get("OPENBAO_SEAL_MIGRATION_FROM", "")
+    if migrate_from and migrate_from != unseal_mode and migrate_from in ("auto", "transit"):
+        static_part.extend(seal_stanza(env, migrate_from, container_env, disabled=True))
+    if unseal_mode in ("auto", "transit"):
+        static_part.extend(seal_stanza(env, unseal_mode, container_env))
 
     static_text = "\n".join(static_part) + "\n"
     signature = hashlib.sha256(static_text.encode()).hexdigest()
@@ -423,11 +873,15 @@ def render_config(env):
     init_env = []
     if auto_initialize_wanted(env):
         params = discover_ldap(env["OPENBAO_USER_DOMAIN"])
-        if params:
-            init_text = render_initialize(params, env["OPENBAO_LDAP_ADMIN_GROUP"])
-            init_env.append(f"{LDAP_BIND_PASSWORD_VAR}={params['bind_password']}")
-        else:
+        if not params:
             log("Self-initialization skipped: the user domain is not available", "<4>")
+        elif "ldap" not in plugins:
+            log("Self-initialization skipped: the LDAP auth plugin is not installed", "<4>")
+        else:
+            init_text = render_initialize(params, env)
+            init_env.append(f"{LDAP_BIND_PASSWORD_VAR}={params['bind_password']}")
+            init_env.append(f"{BREAKGLASS_TOKEN_VAR}={ensure_breakglass_token()}")
+            init_env.append(f"{MODULE_TOKEN_VAR}={ensure_module_token_id()}")
 
     config_text = (
         "# Generated by ns8-openbao: manual changes are overwritten.\n"
@@ -442,6 +896,9 @@ def render_config(env):
     endpoint = metrics_endpoint()
     publish = f"--publish={endpoint[0]}:{endpoint[1]}:{METRICS_CONTAINER_PORT}" if endpoint else ""
     runtime_env_text = f"OPENBAO_PUBLISH_METRICS={publish}\n"
+    vpn_api = vpn_api_endpoint(env)
+    vpn_publish = f"--publish={vpn_api[0]}:{vpn_api[1]}:8200" if vpn_api else ""
+    runtime_env_text += f"OPENBAO_PUBLISH_VPN_API={vpn_publish}\n"
     return {
         "runtime_env_text": runtime_env_text,
         "config_text": config_text,
@@ -514,6 +971,117 @@ def required_change(record, initialized=True):
 
 def notify_recipients(env):
     return [r for r in env.get("OPENBAO_NOTIFY_RECIPIENTS", "").split(",") if r]
+
+
+def ip_allowlist(env):
+    return [n for n in env.get("OPENBAO_IP_ALLOWLIST", "").split(",") if n]
+
+
+def starter_kits(env):
+    return [k for k in env.get("OPENBAO_STARTER_KITS", "").split(",") if k in STARTER_KITS]
+
+
+def encode_group_policies(mappings):
+    """Encode [{group, policy}] for the environment file (no quotes/spaces)."""
+    return urllib.parse.quote(json.dumps(mappings, separators=(",", ":")), safe="")
+
+
+def ldap_group_policies(env):
+    """Return the [{group, policy}] mapping of directory groups to policies."""
+    raw = env.get("OPENBAO_LDAP_GROUP_POLICIES", "")
+    if not raw:
+        return []
+    try:
+        mappings = json.loads(urllib.parse.unquote(raw))
+        return [m for m in mappings if m.get("group") and m.get("policy")]
+    except (ValueError, AttributeError):
+        log("Invalid OPENBAO_LDAP_GROUP_POLICIES value: ignored", "<4>")
+        return []
+
+
+def group_policy_map(env):
+    """Return {group: [policies]}: the administrators group plus the mapping table."""
+    groups = {}
+    admin_group = env.get("OPENBAO_LDAP_ADMIN_GROUP", "")
+    if admin_group:
+        groups[admin_group] = [ADMIN_POLICY_NAME]
+    for mapping in ldap_group_policies(env):
+        policies = groups.setdefault(mapping["group"], [])
+        if mapping["policy"] not in policies:
+            policies.append(mapping["policy"])
+    return groups
+
+
+def policy_requests():
+    """Requests that create or update the built-in policies."""
+    return [{
+        "name": f"policy-{name}",
+        "operation": "update",
+        "path": f"sys/policies/acl/{name}",
+        "data": {"policy": text},
+    } for name, text in BUILTIN_POLICIES.items()]
+
+
+def group_requests(groups):
+    """Requests that map directory groups to policies."""
+    return [{
+        "name": "ldap-group-" + "".join(c if c.isalnum() else "-" for c in group.lower()),
+        "operation": "update",
+        "path": "auth/ldap/groups/" + group,
+        "data": {"policies": policies},
+    } for group, policies in groups.items()]
+
+
+def kit_requests(kits, host):
+    """Requests of the starter kits. Each is idempotent on a fresh server."""
+    requests = []
+    if "kv" in kits:
+        requests.append({
+            "name": "kit-kv-mount",
+            "operation": "update",
+            "path": "sys/mounts/secret",
+            "data": {"type": "kv", "description": "Key/value secrets", "options": {"version": "2"}},
+        })
+    if "pki" in kits:
+        base = f"https://{host}/v1/pki" if host else ""
+        requests.append({
+            "name": "kit-pki-mount",
+            "operation": "update",
+            "path": "sys/mounts/pki",
+            "data": {"type": "pki", "description": "Internal certificate authority",
+                     "config": {"max_lease_ttl": "87600h"}},
+        })
+        requests.append({
+            "name": "kit-pki-root",
+            "operation": "update",
+            "path": "pki/root/generate/internal",
+            "data": {"common_name": f"{host or 'OpenBao'} internal root CA",
+                     "issuer_name": "ns8-root", "ttl": "87600h",
+                     "key_type": "ec", "key_bits": 384},
+        })
+        if base:
+            requests.append({
+                "name": "kit-pki-urls",
+                "operation": "update",
+                "path": "pki/config/urls",
+                "data": {"issuing_certificates": [f"{base}/ca"],
+                         "crl_distribution_points": [f"{base}/crl"]},
+            })
+        requests.append({
+            "name": "kit-pki-role",
+            "operation": "update",
+            "path": "pki/roles/ns8-server",
+            "data": {"allow_any_name": True, "server_flag": True, "client_flag": True,
+                     "key_type": "ec", "key_bits": 256, "ttl": "720h", "max_ttl": "2160h"},
+        })
+    if "approle" in kits:
+        requests.append({
+            "name": "kit-approle",
+            "operation": "update",
+            "path": "sys/auth/approle",
+            "data": {"type": "approle", "description": "Application login"},
+        })
+    return requests
 
 
 def send_notification(env, subject, body, recipients=None):
