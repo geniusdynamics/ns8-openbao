@@ -126,6 +126,18 @@ them. The module never sees or stores them: NethServer keeps action
 inputs and outputs in Redis, readable by other modules, so they are
 handled only by the OpenBao web UI or CLI, over HTTPS.
 
+### Setup wizard
+
+The easiest way: open the application. While OpenBao is not configured,
+the *Status* page starts the **setup wizard**, which asks for the web
+address, the unseal mode (explaining the trade-offs), directory login and
+email notifications, shows a summary, applies everything at once, and
+ends with the exact next steps for the setup you chose (one of A-D
+below), with buttons to open OpenBao or its LDAP login. It can be run
+again at any time with the *Setup wizard* button of the *Status* page.
+Advanced users can cancel it and use the *Settings* page, which has every
+option.
+
 ### Choose your setup
 
 | Setup | Unseal mode | Directory login | First credentials |
@@ -135,9 +147,9 @@ handled only by the OpenBao web UI or CLI, over HTTPS.
 | [C](#c-automatic-unseal-with-automatic-directory-login) | automatic | yes, `auto_initialize` | none: domain admins log in |
 | [D](#d-adding-directory-login-later) | any | yes, after initialization | root token of A or B |
 
-Start in every case from the application *Settings* page: set the host
-name, choose the unseal mode and, for C, the user domain and the
-administrators group. Save, then go to the *Status* page.
+Start in every case from the setup wizard, or from the *Settings* page:
+set the host name, choose the unseal mode and, for C, the user domain and
+the administrators group. Then follow the steps below.
 
 ### A. Manual unseal, without directory login
 

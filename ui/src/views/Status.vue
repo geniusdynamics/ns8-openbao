@@ -6,10 +6,22 @@
 <template>
   <cv-grid fullWidth>
     <cv-row>
-      <cv-column class="page-title">
+      <cv-column class="page-title title-with-actions">
         <h2>{{ $t("status.title") }}</h2>
+        <NsButton
+          kind="ghost"
+          :icon="Rocket20"
+          :disabled="loading.getOpenbaoStatus"
+          @click="showWizard"
+          >{{ $t("wizard.open_wizard") }}</NsButton
+        >
       </cv-column>
     </cv-row>
+    <SetupWizard
+      :visible="isWizardShown"
+      @hide="isWizardShown = false"
+      @configured="onWizardConfigured"
+    />
     <cv-row v-if="error.getStatus">
       <cv-column>
         <NsInlineNotification
@@ -57,6 +69,8 @@
           :kind="openbaoNotice.kind"
           :title="openbaoNotice.title"
           :description="openbaoNotice.description"
+          :actionLabel="openbao.ui_url ? '' : $t('wizard.start_wizard')"
+          @action="showWizard"
           :showCloseButton="false"
         />
       </cv-column>
@@ -85,11 +99,11 @@
               <NsButton
                 v-else
                 kind="ghost"
-                :icon="Settings20"
+                :icon="Rocket20"
                 :disabled="loading.getOpenbaoStatus"
-                @click="goToAppPage(instanceName, 'settings')"
+                @click="showWizard"
               >
-                {{ $t("status.configure") }}
+                {{ $t("wizard.start_wizard") }}
               </NsButton>
               <NsButton
                 kind="ghost"
@@ -376,10 +390,12 @@ import {
   PageTitleService,
 } from "@nethserver/ns8-ui-lib";
 import Password32 from "@carbon/icons-vue/es/password/32";
+import SetupWizard from "@/components/SetupWizard";
 import Group32 from "@carbon/icons-vue/es/group/32";
 
 export default {
   name: "Status",
+  components: { SetupWizard },
   mixins: [
     TaskService,
     QueryParamService,
@@ -420,6 +436,8 @@ export default {
         ui_url: "",
       },
       isOpenbaoStatusLoaded: false,
+      isWizardShown: false,
+      isWizardAutoOpened: false,
       backupRepositories: [],
       backups: [],
       loading: {
@@ -613,6 +631,19 @@ export default {
       this.openbao = taskResult.output;
       this.isOpenbaoStatusLoaded = true;
       this.loading.getOpenbaoStatus = false;
+      // Guide new instances through the setup, once per page visit.
+      // Advanced users can cancel and use the Settings page.
+      if (!this.openbao.ui_url && !this.isWizardAutoOpened) {
+        this.isWizardAutoOpened = true;
+        this.showWizard();
+      }
+    },
+    showWizard() {
+      this.isWizardShown = true;
+    },
+    onWizardConfigured() {
+      this.getOpenbaoStatus();
+      this.getStatus();
     },
     async getStatus() {
       this.loading.getStatus = true;
@@ -775,6 +806,13 @@ export default {
 
 <style scoped lang="scss">
 @import "../styles/carbon-utils";
+
+.title-with-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+}
 
 .card-actions {
   display: flex;
