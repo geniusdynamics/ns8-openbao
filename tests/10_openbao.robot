@@ -233,7 +233,7 @@ Check if scheduled snapshots are taken and listed
     ${output}  ${rc} =    Execute Command    api-cli run module/${module_id}/list-snapshots
     ...    return_rc=True
     Should Be Equal As Integers    ${rc}  0
-    &{list} =    Evaluate    json.loads('''${output}''')    modules=json
+    &{list} =    Evaluate    json.loads($output)    modules=json
     Should Not Be Empty    ${list.snapshots}
     Set Suite Variable    ${snapshot_name}    ${list.snapshots[0]['name']}
 
