@@ -28,6 +28,8 @@ request = {
     "ip_allowlist": openbao.ip_allowlist(env),
     "starter_kits": openbao.starter_kits(env),
     "vpn_api": openbao.vpn_api_enabled(env),
+    "public_access": openbao.public_access(env),
+    "snapshot_keep": openbao.snapshot_keep(env),
     "transit_address": env["OPENBAO_TRANSIT_ADDRESS"],
     "transit_mount": env["OPENBAO_TRANSIT_MOUNT"],
     "transit_key": env["OPENBAO_TRANSIT_KEY"],

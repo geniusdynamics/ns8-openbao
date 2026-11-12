@@ -1,0 +1,23 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# List the scheduled Raft snapshots kept on the node. Restoring one needs
+# an administrator token, so it is done on the node with
+# openbao-snapshot-restore.
+#
+
+import json
+import sys
+import openbao
+
+env = openbao.read_environment()
+json.dump({
+    "snapshot_keep": openbao.snapshot_keep(env),
+    "module_token": openbao.read_module_token() != "",
+    "snapshots": openbao.list_snapshots(),
+}, fp=sys.stdout)

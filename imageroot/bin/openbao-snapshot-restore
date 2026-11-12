@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# Restore a Raft snapshot, replacing ALL the current OpenBao data. Run it
+# on the node with an administrator token (BAO_TOKEN or prompted):
+#
+#   runagent -m openbao1 openbao-snapshot-restore openbao-20261112-031500.snap
+#   runagent -m openbao1 openbao-snapshot-restore /path/other-cluster.snap --force
+#
+# A name without "/" is looked up among the scheduled snapshots
+# (state/snapshots). Snapshots of this same OpenBao restore directly. A
+# snapshot of another OpenBao (for example openbao.snap from a backup of a
+# different instance) needs --force; OpenBao then seals itself and needs
+# the unseal or recovery keys of the OpenBao that produced the snapshot.
+#
+
+import getpass
+import os
+import sys
+import urllib.error
+import urllib.request
+import openbao
+
+args = [a for a in sys.argv[1:] if not a.startswith("--")]
+force = "--force" in sys.argv
+assume_yes = "--yes" in sys.argv
+if len(args) != 1:
+    sys.exit("Usage: openbao-snapshot-restore SNAPSHOT [--force] [--yes]")
+
+path = args[0] if "/" in args[0] else os.path.join(openbao.SNAPSHOT_DIR, args[0])
+if not os.path.isfile(path):
+    sys.exit(f"Snapshot not found: {path}")
+
+status = openbao.get_seal_status()
+if not status or not status.get("initialized") or status.get("sealed"):
+    sys.exit("OpenBao must be running, initialized and unsealed")
+
+token = os.environ.get("BAO_TOKEN") or getpass.getpass("OpenBao administrator token: ")
+if not assume_yes:
+    answer = input(f"Replace ALL OpenBao data with {path}? Type 'yes': ")
+    if answer.strip().lower() != "yes":
+        sys.exit("Nothing restored")
+
+endpoint = "snapshot-force" if force else "snapshot"
+url = f"http://127.0.0.1:{os.environ['TCP_PORT']}/v1/sys/storage/raft/{endpoint}"
+with open(path, "rb") as sfile:
+    req = urllib.request.Request(url, data=sfile.read(), method="POST", headers={
+        "X-Vault-Token": token,
+        "Content-Type": "application/octet-stream",
+    })
+try:
+    with openbao._opener().open(req, timeout=600):
+        pass
+except urllib.error.HTTPError as ex:
+    detail = ex.read().decode(errors="replace")
+    if "use the snapshot-force API" in detail:
+        sys.exit("The snapshot comes from another OpenBao: run again with --force")
+    sys.exit(f"Restore failed: HTTP {ex.code} {detail}")
+
+print("Snapshot restored.")
+after = openbao.get_seal_status()
+if after and after.get("sealed"):
+    print("OpenBao is now sealed: unseal it with the keys of the OpenBao that produced the snapshot.")

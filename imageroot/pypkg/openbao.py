@@ -60,7 +60,12 @@ DEFAULTS = {
     "OPENBAO_TRANSIT_MOUNT": "transit",
     "OPENBAO_TRANSIT_KEY": "",
     "OPENBAO_TRANSIT_TLS_SKIP_VERIFY": "False",
+    "OPENBAO_PUBLIC_ACCESS": "True",
+    "OPENBAO_SNAPSHOT_KEEP": "0",
+    "OPENBAO_SEAL_MIGRATION_FROM": "",
 }
+
+SNAPSHOT_DIR = "snapshots"  # scheduled local snapshots, not in backups
 
 STARTER_KITS = ["kv", "pki", "approle"]
 APPLIED_GROUPS_FILE = "openbao-ldap-groups-applied.json"
@@ -694,6 +699,59 @@ def metrics_endpoint():
     return address, port
 
 
+def seal_stanza(env, mode, container_env, disabled=False):
+    """Return the HCL lines of an auto seal, adding its secrets to container_env."""
+    lines = [""]
+    if mode == "transit":
+        lines.append('seal "transit" {')
+        lines.append(f"  address         = {_hcl_string(env['OPENBAO_TRANSIT_ADDRESS'])}")
+        lines.append(f"  mount_path      = {_hcl_string(env['OPENBAO_TRANSIT_MOUNT'] or 'transit')}")
+        lines.append(f"  key_name        = {_hcl_string(env['OPENBAO_TRANSIT_KEY'])}")
+        lines.append(f"  tls_skip_verify = {_hcl_string(str(is_true(env['OPENBAO_TRANSIT_TLS_SKIP_VERIFY'])).lower())}")
+        try:
+            with open(TRANSIT_TOKEN_FILE, encoding="utf-8") as tfile:
+                # The seal renews this token by itself
+                container_env.append(f"BAO_TOKEN={tfile.read().strip()}")
+        except FileNotFoundError:
+            log("Transit seal: no token, run openbao-transit-token", "<3>")
+    else:
+        key_id, key_hex = ensure_seal_key()
+        lines.append('seal "static" {')
+        lines.append(f"  current_key_id = {_hcl_string(key_id)}")
+        lines.append('  current_key    = "env://BAO_STATIC_SEAL_CURRENT_KEY"')
+        container_env.append(f"BAO_STATIC_SEAL_CURRENT_KEY_ID={key_id}")
+        container_env.append(f"BAO_STATIC_SEAL_CURRENT_KEY={key_hex}")
+    if disabled:
+        lines.append('  disabled        = "true"')
+    lines.append("}")
+    return lines
+
+
+def public_access(env):
+    return is_true(env.get("OPENBAO_PUBLIC_ACCESS", "True"))
+
+
+def snapshot_keep(env):
+    value = env.get("OPENBAO_SNAPSHOT_KEEP", "0")
+    return int(value) if value.isdigit() else 0
+
+
+def list_snapshots():
+    """Return [{name, size, created}] of the scheduled snapshots, newest first."""
+    snapshots = []
+    try:
+        names = os.listdir(SNAPSHOT_DIR)
+    except FileNotFoundError:
+        return []
+    for name in names:
+        if not name.endswith(".snap"):
+            continue
+        path = os.path.join(SNAPSHOT_DIR, name)
+        stat = os.stat(path)
+        snapshots.append({"name": name, "size": stat.st_size, "created": int(stat.st_mtime)})
+    return sorted(snapshots, key=lambda s: s["created"], reverse=True)
+
+
 def auto_initialize_wanted(env):
     return (
         env["OPENBAO_UNSEAL_MODE"] in ("auto", "transit")
@@ -713,6 +771,10 @@ def render_config(env):
     """
     host = env.get("TRAEFIK_HOST", "")
     api_addr = f"https://{host}" if host else "http://127.0.0.1:8200"
+    if not public_access(env):
+        vpn_api = vpn_api_endpoint(env)
+        if vpn_api:
+            api_addr = f"http://{vpn_api[0]}:{vpn_api[1]}"
     unseal_mode = env["OPENBAO_UNSEAL_MODE"]
     log_level = env["OPENBAO_LOG_LEVEL"]
     if log_level not in LOG_LEVELS:
@@ -771,29 +833,13 @@ def render_config(env):
             static_part.append("}")
 
     container_env = []
-    if unseal_mode == "transit":
-        static_part.append("")
-        static_part.append('seal "transit" {')
-        static_part.append(f"  address         = {_hcl_string(env['OPENBAO_TRANSIT_ADDRESS'])}")
-        static_part.append(f"  mount_path      = {_hcl_string(env['OPENBAO_TRANSIT_MOUNT'] or 'transit')}")
-        static_part.append(f"  key_name        = {_hcl_string(env['OPENBAO_TRANSIT_KEY'])}")
-        static_part.append(f"  tls_skip_verify = {_hcl_string(str(is_true(env['OPENBAO_TRANSIT_TLS_SKIP_VERIFY'])).lower())}")
-        static_part.append("}")
-        try:
-            with open(TRANSIT_TOKEN_FILE, encoding="utf-8") as tfile:
-                # The seal renews this token by itself
-                container_env.append(f"BAO_TOKEN={tfile.read().strip()}")
-        except FileNotFoundError:
-            log("Transit seal: no token, run openbao-transit-token", "<3>")
-    elif unseal_mode == "auto":
-        key_id, key_hex = ensure_seal_key()
-        static_part.append("")
-        static_part.append('seal "static" {')
-        static_part.append(f"  current_key_id = {_hcl_string(key_id)}")
-        static_part.append('  current_key    = "env://BAO_STATIC_SEAL_CURRENT_KEY"')
-        static_part.append("}")
-        container_env.append(f"BAO_STATIC_SEAL_CURRENT_KEY_ID={key_id}")
-        container_env.append(f"BAO_STATIC_SEAL_CURRENT_KEY={key_hex}")
+    # During a seal migration the previous auto seal stays configured with
+    # disabled = "true", next to the new seal (none for Shamir/manual).
+    migrate_from = env.get("OPENBAO_SEAL_MIGRATION_FROM", "")
+    if migrate_from and migrate_from != unseal_mode and migrate_from in ("auto", "transit"):
+        static_part.extend(seal_stanza(env, migrate_from, container_env, disabled=True))
+    if unseal_mode in ("auto", "transit"):
+        static_part.extend(seal_stanza(env, unseal_mode, container_env))
 
     static_text = "\n".join(static_part) + "\n"
     signature = hashlib.sha256(static_text.encode()).hexdigest()

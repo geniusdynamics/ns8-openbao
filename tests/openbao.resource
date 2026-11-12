@@ -48,3 +48,15 @@ Execute Command And Expect Success
     ${rc} =    Execute Command    ${command}
     ...    return_rc=True  return_stdout=False
     Should Be Equal As Integers    ${rc}  0
+
+Unseal If Sealed
+    [Arguments]    ${host}    ${key}
+    &{status} =    Seal Status    ${host}
+    IF    ${status.sealed}
+        Unseal OpenBao    ${host}    ${key}
+    END
+
+Seal Status Should Be Sealed
+    [Arguments]    ${host}
+    &{status} =    Seal Status    ${host}
+    Should Be Equal    ${status.sealed}    ${True}

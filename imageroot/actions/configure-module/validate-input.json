@@ -31,7 +31,9 @@
                 "kv",
                 "pki"
             ],
-            "vpn_api": false
+            "vpn_api": false,
+            "public_access": true,
+            "snapshot_keep": 7
         },
         {
             "host": "vault.example.org"
@@ -196,6 +198,17 @@
         "transit_tls_skip_verify": {
             "type": "boolean",
             "description": "Transit seal: do not verify the TLS certificate of the external server"
+        },
+        "public_access": {
+            "type": "boolean",
+            "title": "Public access",
+            "description": "Publish the API and web UI through Traefik on the host name. false: reachable only on the cluster network API (requires vpn_api). Default true"
+        },
+        "snapshot_keep": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 90,
+            "description": "Number of daily Raft snapshots kept on the node (requires the module token). 0 disables them"
         }
     }
 }
