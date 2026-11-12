@@ -73,6 +73,20 @@
           @action="showWizard"
           :showCloseButton="false"
         />
+        <NsCodeSnippet
+          v-if="
+            openbao.ui_url &&
+            openbao.reachable &&
+            !openbao.initialized &&
+            !openbao.auto_initialize
+          "
+          :copyTooltip="$t('settings.copy_to_clipboard')"
+          :copy-feedback="$t('settings.copied_to_clipboard')"
+          :feedback-aria-label="$t('settings.copied_to_clipboard')"
+          hideExpandButton
+          class="init-command"
+          >{{ initCommand }}</NsCodeSnippet
+        >
       </cv-column>
     </cv-row>
     <cv-row v-if="openbao.seal_migration_from">
@@ -554,6 +568,7 @@ export default {
         ui_url: "",
         ha: null,
         plugins: [],
+        auto_initialize: false,
       },
       isOpenbaoStatusLoaded: false,
       isWizardShown: false,
@@ -622,6 +637,9 @@ export default {
       }
       return this.$t("status.openbao_server");
     },
+    initCommand() {
+      return `runagent -m ${this.instanceName} openbao-init`;
+    },
     haDescription() {
       const ha = this.openbao.ha;
       if (!ha || ha.is_self === null) {
@@ -652,10 +670,9 @@ export default {
         return {
           kind: "warning",
           title: this.$t("status.initialize_title"),
-          description:
-            ob.unseal_mode === "auto"
-              ? this.$t("status.initialize_description_auto")
-              : this.$t("status.initialize_description"),
+          description: ["auto", "transit"].includes(ob.unseal_mode)
+            ? this.$t("status.initialize_description_auto")
+            : this.$t("status.initialize_description"),
         };
       } else if (ob.sealed) {
         return {
@@ -974,5 +991,9 @@ export default {
 
 .ha-hint {
   color: $text-02;
+}
+
+.init-command {
+  margin-bottom: $spacing-05;
 }
 </style>

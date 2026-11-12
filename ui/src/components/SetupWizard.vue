@@ -452,6 +452,29 @@
           <!-- A, B: the administrator initializes OpenBao -->
           <template v-else-if="outcome === 'initialize'">
             <p class="mg-bottom">{{ $t("wizard.done_initialize") }}</p>
+            <h6 class="mg-bottom-small">{{ $t("wizard.init_cli_title") }}</h6>
+            <p class="mg-bottom-small">
+              {{
+                unsealMode === "manual"
+                  ? $t("wizard.init_cli_description_manual")
+                  : $t("wizard.init_cli_description_auto")
+              }}
+            </p>
+            <NsCodeSnippet
+              :copyTooltip="$t('settings.copy_to_clipboard')"
+              :copy-feedback="$t('settings.copied_to_clipboard')"
+              :feedback-aria-label="$t('settings.copied_to_clipboard')"
+              hideExpandButton
+              class="mg-bottom"
+              >{{ initCommand }}</NsCodeSnippet
+            >
+            <h6 class="mg-bottom-small">{{ $t("wizard.init_ui_title") }}</h6>
+            <NsInlineNotification
+              kind="warning"
+              :title="$t('wizard.init_ui_warning_title')"
+              :description="$t('wizard.init_ui_warning_description')"
+              :showCloseButton="false"
+            />
             <ol class="next-steps mg-bottom">
               <li>{{ $t("wizard.init_step_open") }}</li>
               <li>
@@ -600,6 +623,9 @@ export default {
     },
     numberedSteps() {
       return this.steps.filter((s) => !["welcome", "done"].includes(s));
+    },
+    initCommand() {
+      return `runagent -m ${this.instanceName} openbao-init`;
     },
     transitTokenCommand() {
       return `runagent -m ${this.instanceName} openbao-transit-token`;
@@ -1079,5 +1105,9 @@ export default {
 .review-label {
   font-weight: 600;
   width: 40%;
+}
+
+.mg-bottom-small {
+  margin-bottom: $spacing-03;
 }
 </style>

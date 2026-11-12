@@ -51,10 +51,44 @@ Start in every case from the setup wizard, or from the *Settings* page:
 set the host name, choose the unseal mode and, for C, the user domain and
 the administrators group. Then follow the steps below.
 
+### Initialize from the server (recommended)
+
+Run on the NethServer node, in a terminal (SSH, or the terminal of the
+cluster admin):
+
+```bash
+runagent -m openbao1 openbao-init                       # 5 key shares, threshold 3
+runagent -m openbao1 openbao-init --shares 3 --threshold 2
+```
+
+It initializes OpenBao and prints the keys and the root token in the
+terminal, where they stay until you copy them; with manual unseal it also
+unseals OpenBao with them. Nothing is written to disk or passed through
+NethServer actions. Then continue from the "sign in" step of A or B below.
+
+The OpenBao web UI can initialize too (steps below), but it may move on
+to the next page right after initializing: copy or download the keys as
+soon as they appear, they are never shown again.
+
+### Keys or root token not saved
+
+If OpenBao was just initialized and the keys or the root token were lost
+before anything was stored in it, nobody can unseal it or get
+administrator access, and there is nothing to recover. Remove the
+application and install it again (or, for an instance stuck after a 1.0.0
+automatic initialization, use `openbao-reset-failed-init`, see
+[Updating from 1.0.0](operations.md#updating-from-100)):
+
+```bash
+remove-module --no-preserve openbao1
+add-module ghcr.io/geniusdynamics/openbao:latest 1
+```
+
 ### A. Manual unseal, without directory login
 
 1. On the *Status* page click **Open OpenBao**. The web UI shows the
-   initialization page.
+   initialization page. (Or use `openbao-init`, see above, and continue
+   from step 5.)
 2. Choose the number of key shares and the threshold (for example 5 and
    3) and initialize.
 3. **Download the keys** (JSON file) or copy the root token and every
@@ -82,7 +116,8 @@ enter the threshold number of unseal keys, or run `bao operator unseal`.
 
 ### B. Automatic unseal, without directory login
 
-1. On the *Status* page click **Open OpenBao** and initialize. There is no
+1. Run `runagent -m openbao1 openbao-init` on the node (see above), or on
+   the *Status* page click **Open OpenBao** and initialize. There is no
    unseal step: OpenBao unseals itself with the key stored on the node.
 2. Save the **root token** and the **recovery keys**.
 3. Sign in with the root token, create administrator access (as in step 6

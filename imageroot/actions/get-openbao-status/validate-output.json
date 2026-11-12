@@ -30,7 +30,8 @@
                 "leader_address": "",
                 "peers": null
             },
-            "plugins": []
+            "plugins": [],
+            "auto_initialize": false
         }
     ],
     "type": "object",
@@ -52,7 +53,8 @@
         "seal_migration_from",
         "migration",
         "ha",
-        "plugins"
+        "plugins",
+        "auto_initialize"
     ],
     "properties": {
         "service_active": {
@@ -204,6 +206,10 @@
                 "type": "string"
             },
             "description": "Ids of the optional plugins installed from the catalog"
+        },
+        "auto_initialize": {
+            "type": "boolean",
+            "description": "OpenBao is configured to initialize itself"
         }
     }
 }

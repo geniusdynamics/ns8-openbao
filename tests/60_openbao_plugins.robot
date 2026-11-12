@@ -4,6 +4,7 @@ Documentation    Optional plugins of the catalog: nothing is downloaded until a
 ...              and registered; a disabled plugin is removed.
 Library    SSHLibrary
 Library    Collections
+Library    String
 Resource    openbao.resource
 
 *** Variables ***
@@ -28,18 +29,25 @@ Plugin Image Should Be Absent
     Should Not Contain    ${output}    openbao-plugin-auth-github
 
 *** Test Cases ***
-Check if openbao is installed and initialized
+Check if openbao is installed and initialized with openbao-init
     ${output}  ${rc} =    Execute Command    add-module ${IMAGE_URL} 1
     ...    return_rc=True
     Should Be Equal As Integers    ${rc}  0
     &{output} =    Evaluate    ${output}
     Set Suite Variable    ${module_id}    ${output.module_id}
     Configure OpenBao    ${module_id}    ${HOST}    manual
-    &{init} =    Bao Request    ${HOST}    PUT    sys/init    {"secret_shares": 1, "secret_threshold": 1}
-    Set Suite Variable    ${root_token}    ${init.root_token}
-    Set Suite Variable    ${unseal_key}    ${init['keys'][0]}
-    Unseal OpenBao    ${HOST}    ${unseal_key}
+    # openbao-init prints the credentials and unseals OpenBao
+    ${output}  ${rc} =    Execute Command    runagent -m ${module_id} openbao-init --shares 1 --threshold 1
+    ...    return_rc=True
+    Should Be Equal As Integers    ${rc}  0
+    ${key_line} =    Get Lines Matching Regexp    ${output}    ^Unseal key 1: .+
+    ${token_line} =    Get Lines Matching Regexp    ${output}    ^Root token: .+
+    Set Suite Variable    ${unseal_key}    ${key_line.split(': ', 1)[1].strip()}
+    Set Suite Variable    ${root_token}    ${token_line.split(': ', 1)[1].strip()}
     Wait Until Keyword Succeeds    30s    2s    OpenBao Should Be Active    ${HOST}
+    ${rc} =    Execute Command    runagent -m ${module_id} openbao-init
+    ...    return_rc=True  return_stdout=False
+    Should Not Be Equal As Integers    ${rc}  0
 
 Check if the catalog lists plugins without downloading them
     &{ldap} =    Plugin State    auth-ldap

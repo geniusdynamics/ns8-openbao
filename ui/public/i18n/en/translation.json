@@ -39,8 +39,8 @@
     "configure_first_title": "Configure OpenBao",
     "configure_first_description": "Set the host name and the unseal mode to start OpenBao.",
     "initialize_title": "OpenBao must be initialized",
-    "initialize_description": "Open the OpenBao web UI to initialize it. Store the root token and the keys it shows in a safe place: they are displayed only once and cannot be recovered.",
-    "initialize_description_auto": "Open the OpenBao web UI to initialize it. Store the root token and the recovery keys it shows in a safe place: they are displayed only once and cannot be recovered.",
+    "initialize_description": "Run the command below on the server: it initializes OpenBao, prints the unseal keys and the root token in your terminal and unseals it. Store them in safe, separate places: they are shown only once. The OpenBao web UI can initialize it too, but copy the keys as soon as they appear.",
+    "initialize_description_auto": "Run the command below on the server: it initializes OpenBao and prints the recovery keys and the root token in your terminal. Store them in safe, separate places: they are shown only once. The OpenBao web UI can initialize it too, but copy the keys as soon as they appear.",
     "sealed_title": "OpenBao is sealed",
     "sealed_description": "Secrets cannot be accessed until OpenBao is unsealed. Open the OpenBao web UI and enter {threshold} of the {shares} unseal keys. Keys entered so far: {progress}.",
     "sealed_auto_description": "Automatic unseal did not succeed. Check the system logs of the application.",
@@ -341,7 +341,13 @@
     "join_quorum_title": "Plan for 3 instances",
     "join_quorum_description": "A Raft cluster keeps working while a majority of its members runs: 2 instances stop if either one stops. Use 3 instances.",
     "done_joined_manual": "This instance is joining the cluster. Open its web UI and unseal it with the unseal keys of the cluster: it completes the join when it is unsealed, then works as a standby.",
-    "done_joined_transit": "This instance is joining the cluster and unseals itself with the Transit key. It then works as a standby."
+    "done_joined_transit": "This instance is joining the cluster and unseals itself with the Transit key. It then works as a standby.",
+    "init_cli_title": "Recommended: initialize from the server",
+    "init_cli_description_manual": "Run this command on the server (for example in the cluster-admin terminal or over SSH). It prints the unseal keys and the root token in your terminal, where they stay until you copy them, then unseals OpenBao. Nothing is stored by NethServer.",
+    "init_cli_description_auto": "Run this command on the server (for example in the cluster-admin terminal or over SSH). It prints the recovery keys and the root token in your terminal, where they stay until you copy them. Nothing is stored by NethServer.",
+    "init_ui_title": "Or: initialize from the OpenBao web interface",
+    "init_ui_warning_title": "Copy the keys as soon as they appear",
+    "init_ui_warning_description": "The web interface may move on to the next page by itself right after initializing, and the keys and root token are never shown again. Use the Download button, or prefer the command above."
   },
   "plugins": {
     "title": "Plugins",

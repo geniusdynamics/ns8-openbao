@@ -58,6 +58,8 @@ result = {
     "shares": int(status.get("n", 0)) if status else 0,
     "progress": int(status.get("progress", 0)) if status else 0,
     "unseal_mode": env["OPENBAO_UNSEAL_MODE"],
+    # OpenBao initializes itself (no openbao-init needed)
+    "auto_initialize": openbao.auto_initialize_wanted(env),
     "user_domain": env["OPENBAO_USER_DOMAIN"],
     # Needs the module token (openbao-module-token); never returns tokens
     "module_token": openbao.module_token_status() if status else "unknown",
