@@ -49,7 +49,9 @@
             "transit_mount": "transit",
             "transit_key": "",
             "transit_tls_skip_verify": false,
-            "transit_token_present": false
+            "transit_token_present": false,
+            "public_access": true,
+            "snapshot_keep": 0
         }
     ],
     "type": "object",
@@ -76,7 +78,9 @@
         "transit_mount",
         "transit_key",
         "transit_tls_skip_verify",
-        "transit_token_present"
+        "transit_token_present",
+        "public_access",
+        "snapshot_keep"
     ],
     "properties": {
         "host": {
@@ -226,6 +230,13 @@
         "transit_token_present": {
             "type": "boolean",
             "description": "The Transit seal token was stored with openbao-transit-token"
+        },
+        "public_access": {
+            "type": "boolean"
+        },
+        "snapshot_keep": {
+            "type": "integer",
+            "minimum": 0
         }
     }
 }

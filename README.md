@@ -31,8 +31,10 @@ The module runs OpenBao as a rootless container with:
 - [Notifications and alerts](#notifications-and-alerts)
 - [Module token, snapshots and root tokens](#module-token-snapshots-and-root-tokens)
 - [Cluster network API](#cluster-network-api)
+- [Snapshots and restore](#snapshots-and-restore)
 - [Prometheus metrics](#prometheus-metrics)
 - [Not implemented on purpose](#not-implemented-on-purpose)
+- [High availability](#high-availability)
 - [Get the configuration and state](#get-the-configuration-and-state)
 - [Backup and restore](#backup-and-restore)
 - [Update](#update)
@@ -108,6 +110,11 @@ Parameters:
   (default), `pki`, `approle`; see [Starter kits](#starter-kits)
 - `vpn_api`: also publish the API on the cluster VPN, see
   [Cluster network API](#cluster-network-api). Default `false`
+- `public_access`: publish the API and web UI through Traefik on `host`.
+  `false` makes OpenBao reachable only on the cluster network API (requires
+  `vpn_api`). Default `true`
+- `snapshot_keep`: daily Raft snapshots kept on the node, see
+  [Snapshots and restore](#snapshots-and-restore). Default `0` (disabled)
 - `transit_address`, `transit_mount` (default `transit`), `transit_key`,
   `transit_tls_skip_verify`: settings of the `transit` unseal mode, see
   [Unseal modes](#unseal-modes)
@@ -313,9 +320,24 @@ availability matters more and the node disk and backup repository are
 trusted.
 
 The seal type is written into the storage at initialization time, so
-`unseal_mode` is locked once OpenBao is initialized. Switching later
-requires an OpenBao [seal migration](https://openbao.org/docs/concepts/seal/#seal-migration),
-which is not automated by the module.
+`unseal_mode` is locked in *Settings* once OpenBao is initialized. To
+change it afterwards, run a [seal migration](https://openbao.org/docs/concepts/seal/#seal-migration)
+on the node. Take a backup first; the command also keeps a copy of the
+storage (`state/openbao-premigration-*.tar`):
+
+```bash
+runagent -m openbao1 openbao-seal-migrate start auto     # or: manual, transit --transit-address URL --transit-key KEY
+export BAO_ADDR=https://vault.example.org
+bao operator unseal -migrate                             # once per key, until the threshold
+runagent -m openbao1 openbao-seal-migrate finish
+```
+
+Provide the **unseal keys** when leaving manual unseal (they become the
+recovery keys), or the **recovery keys** when leaving automatic or Transit
+unseal (they become the unseal keys when moving to manual). The keys go
+straight to OpenBao. `openbao-seal-migrate status` and `abort` are
+available until OpenBao has applied the migration. OpenBao is unavailable
+for the duration of the migration.
 
 **Never delete or replace `state/openbao-seal.key`** of an instance using
 automatic unseal: without it the data cannot be decrypted.
@@ -382,6 +404,15 @@ these built-in policies:
 
 The name of a policy created in OpenBao can be typed too. A group may
 appear in several rows to get several policies.
+
+> **Note:** when several policies of a token match a path, OpenBao applies
+> only the most specific path; it does not add their capabilities up
+> (capabilities are merged only for identical paths). `ns8-admin` repeats
+> the paths of the other built-in policies, so giving administrators a
+> built-in policy too never narrows their access. A custom policy with a
+> narrower path, mapped to a group the administrators belong to, does
+> narrow it: an administrator would then, for example, only read under
+> that path.
 
 Mappings need an administrator token to be written, so they are applied
 by the self-initialization or, on an initialized server, by
@@ -475,7 +506,32 @@ runagent -m openbao1 openbao-root-tokens --revoke   # revoke, after confirmation
 A snapshot can also be taken at any time with
 `runagent -m openbao1 openbao-snapshot /path/file.snap`.
 
+## Snapshots and restore
+
+Besides backups, the module can keep **daily Raft snapshots** on the node
+(`snapshot_keep`, *Settings*, *Snapshots*), to recover quickly from a
+deleted secret or a wrong change. They need the module token, are taken
+by `openbao-maintenance.timer`, are stored in `state/snapshots/` and are
+not part of backups. *Settings* lists them.
+
+Restoring replaces **all** OpenBao data and needs an administrator token,
+so it runs on the node:
+
+```bash
+runagent -m openbao1 openbao-snapshot-restore openbao-20261112-031500.snap
+```
+
+A snapshot of another OpenBao, for example the `openbao.snap` of a backup
+of a different instance, needs `--force`; OpenBao then seals itself and
+needs the unseal or recovery keys of the OpenBao that produced it.
+
 ## Cluster network API
+
+To make OpenBao reachable **only** from the cluster, disable
+`public_access` (it requires `vpn_api`): the Traefik route is removed and
+`api_addr` points to the cluster network address. Clients using the host
+name stop working, so this is opt-in.
+
 
 With `vpn_api` enabled, the OpenBao API is also published on the third
 module TCP port, bound to the node cluster VPN address
@@ -540,6 +596,13 @@ alternative:
 | Initialize from the NethServer UI | unseal keys and the root token would be stored in Redis | the OpenBao web UI or `bao operator init` (setups A, B), or self-initialization (setup C) |
 | Revoke root tokens from the NethServer UI | needs an administrator token in an action | `openbao-root-tokens --revoke` on the node, or `bao token revoke -self` |
 | Enter the Transit token in the NethServer UI | the token would be stored in Redis | `openbao-transit-token` on the node |
+
+## High availability
+
+Each instance is a single-node Raft cluster. Joining instances into one
+highly available cluster is designed but not implemented yet, because it
+needs testing on a real multi-node cluster: see
+[docs/high-availability.md](docs/high-availability.md).
 
 ## Get the configuration and state
 

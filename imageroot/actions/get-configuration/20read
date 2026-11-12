@@ -40,6 +40,8 @@ config = {
     "starter_kits": openbao.starter_kits(env),
     "builtin_policies": sorted(openbao.BUILTIN_POLICIES),
     "vpn_api": openbao.vpn_api_enabled(env),
+    "public_access": openbao.public_access(env),
+    "snapshot_keep": openbao.snapshot_keep(env),
     "vpn_api_url": "http://{}:{}".format(*vpn) if vpn else "",
     "transit_address": env["OPENBAO_TRANSIT_ADDRESS"],
     "transit_mount": env["OPENBAO_TRANSIT_MOUNT"],

@@ -75,6 +75,27 @@
         />
       </cv-column>
     </cv-row>
+    <cv-row v-if="openbao.seal_migration_from">
+      <cv-column>
+        <NsInlineNotification
+          kind="warning"
+          :title="
+            $t('status.migration_title', {
+              from: $t('status.unseal_mode_' + openbao.seal_migration_from),
+              to: $t('status.unseal_mode_' + openbao.unseal_mode),
+            })
+          "
+          :description="
+            openbao.migration
+              ? $t('status.migration_waiting_keys')
+              : $t('status.migration_finish', {
+                  command: migrationFinishCommand,
+                })
+          "
+          :showCloseButton="false"
+        />
+      </cv-column>
+    </cv-row>
     <cv-row v-if="openbao.root_token_present">
       <cv-column>
         <NsInlineNotification
@@ -461,6 +482,8 @@ export default {
         user_domain: "",
         module_token: "unknown",
         root_token_present: null,
+        seal_migration_from: "",
+        migration: false,
         ui_url: "",
       },
       isOpenbaoStatusLoaded: false,
@@ -484,6 +507,9 @@ export default {
   },
   computed: {
     ...mapState(["instanceName", "instanceLabel", "core", "appName"]),
+    migrationFinishCommand() {
+      return `runagent -m ${this.instanceName} openbao-seal-migrate finish`;
+    },
     rootTokensCommand() {
       return `runagent -m ${this.instanceName} openbao-root-tokens --revoke`;
     },

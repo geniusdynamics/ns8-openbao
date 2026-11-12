@@ -58,7 +58,7 @@ Check if self-initialization created the module token
     Should Be Equal    ${output}    valid
     ${output}  ${rc} =    Execute Command    api-cli run module/${module_id}/get-openbao-status
     ...    return_rc=True
-    &{status} =    Evaluate    json.loads('''${output}''')    modules=json
+    &{status} =    Evaluate    json.loads($output)    modules=json
     Should Be Equal    ${status.root_token_present}    ${False}
 
 Check if the module is bound to the user domain

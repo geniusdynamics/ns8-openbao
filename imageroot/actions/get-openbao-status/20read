@@ -19,6 +19,11 @@ host = env.get("TRAEFIK_HOST", "")
 active = openbao.service_is_active()
 status = openbao.get_seal_status() if active else None
 
+ui_url = f"https://{host}/ui/" if host else ""
+if host and not openbao.public_access(env):
+    vpn = openbao.vpn_api_endpoint(env)
+    ui_url = "http://{}:{}/ui/".format(*vpn) if vpn else ""
+
 result = {
     "service_active": active,
     "reachable": status is not None,
@@ -35,7 +40,9 @@ result = {
     "module_token": openbao.module_token_status() if status else "unknown",
     "root_token_present": openbao.root_token_present()
     if status and status.get("initialized") and not status.get("sealed") else None,
-    "ui_url": f"https://{host}/ui/" if host else "",
+    "ui_url": ui_url,
+    "seal_migration_from": env["OPENBAO_SEAL_MIGRATION_FROM"],
+    "migration": bool(status and status.get("migration")),
 }
 
 json.dump(result, fp=sys.stdout)

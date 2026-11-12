@@ -106,6 +106,35 @@
             >
               {{ $t("settings.vpn_api_url", { url: savedConfig.vpn_api_url }) }}
             </p>
+            <NsToggle
+              value="publicAccess"
+              :label="$t('settings.public_access')"
+              v-model="isPublicAccessEnabled"
+              :disabled="isFormDisabled"
+              class="mg-bottom"
+            >
+              <template slot="tooltip">{{
+                $t("settings.public_access_helper")
+              }}</template>
+              <template slot="text-left">{{
+                $t("settings.disabled")
+              }}</template>
+              <template slot="text-right">{{
+                $t("settings.enabled")
+              }}</template>
+            </NsToggle>
+            <NsInlineNotification
+              v-if="!isPublicAccessEnabled"
+              :kind="isVpnApiEnabled ? 'warning' : 'error'"
+              :title="$t('settings.public_access_off_title')"
+              :description="
+                isVpnApiEnabled
+                  ? $t('settings.public_access_off_description')
+                  : $t('settings.public_access_requires_vpn_api')
+              "
+              :showCloseButton="false"
+              class="maxwidth"
+            />
             <!-- unseal -->
             <h4 class="section-title">{{ $t("settings.section_unseal") }}</h4>
             <cv-radio-group
@@ -370,6 +399,83 @@
                 >{{ applyConfigCommand }}</NsCodeSnippet
               >
             </div>
+            <!-- snapshots -->
+            <h4 class="section-title">
+              {{ $t("settings.section_snapshots") }}
+            </h4>
+            <p class="section-description">
+              {{ $t("settings.snapshots_description") }}
+            </p>
+            <NsTextInput
+              type="number"
+              min="0"
+              max="90"
+              :label="$t('settings.snapshot_keep')"
+              :helper-text="$t('settings.snapshot_keep_helper')"
+              v-model.number="snapshotKeep"
+              :invalid-message="error.snapshot_keep"
+              :disabled="isFormDisabled"
+              class="mg-bottom snapshot-keep"
+              ref="snapshot_keep"
+            />
+            <NsInlineNotification
+              v-if="
+                snapshotKeep > 0 && snapshotInfo && !snapshotInfo.module_token
+              "
+              kind="warning"
+              :title="$t('settings.snapshot_token_missing_title')"
+              :description="
+                $t('settings.snapshot_token_missing_description', {
+                  command: moduleTokenCommand,
+                })
+              "
+              :showCloseButton="false"
+              class="maxwidth"
+            />
+            <div
+              v-if="snapshotInfo && snapshotInfo.snapshots.length"
+              class="maxwidth mg-bottom"
+            >
+              <cv-structured-list>
+                <template slot="headings">
+                  <cv-structured-list-heading>{{
+                    $t("settings.snapshot_name")
+                  }}</cv-structured-list-heading>
+                  <cv-structured-list-heading>{{
+                    $t("settings.snapshot_created")
+                  }}</cv-structured-list-heading>
+                  <cv-structured-list-heading>{{
+                    $t("settings.snapshot_size")
+                  }}</cv-structured-list-heading>
+                </template>
+                <template slot="items">
+                  <cv-structured-list-item
+                    v-for="snap in snapshotInfo.snapshots"
+                    :key="snap.name"
+                  >
+                    <cv-structured-list-data class="break-word">{{
+                      snap.name
+                    }}</cv-structured-list-data>
+                    <cv-structured-list-data>{{
+                      new Date(snap.created * 1000).toLocaleString()
+                    }}</cv-structured-list-data>
+                    <cv-structured-list-data>{{
+                      snap.size | byteFormat
+                    }}</cv-structured-list-data>
+                  </cv-structured-list-item>
+                </template>
+              </cv-structured-list>
+              <p class="section-description">
+                {{ $t("settings.snapshot_restore_description") }}
+              </p>
+              <NsCodeSnippet
+                :copyTooltip="$t('settings.copy_to_clipboard')"
+                :copy-feedback="$t('settings.copied_to_clipboard')"
+                :feedback-aria-label="$t('settings.copied_to_clipboard')"
+                hideExpandButton
+                >{{ snapshotRestoreCommand }}</NsCodeSnippet
+              >
+            </div>
             <!-- notifications -->
             <h4 class="section-title">
               {{ $t("settings.section_notifications") }}
@@ -534,6 +640,9 @@ export default {
       starterKits: ["kv"],
       starterKitList: ["kv", "pki", "approle"],
       isVpnApiEnabled: false,
+      isPublicAccessEnabled: true,
+      snapshotKeep: 0,
+      snapshotInfo: null,
       transitAddress: "",
       transitMount: "transit",
       transitKey: "",
@@ -566,6 +675,8 @@ export default {
         transit_address: "",
         transit_key: "",
         vpn_api: "",
+        public_access: "",
+        snapshot_keep: "",
       },
     };
   },
@@ -606,6 +717,16 @@ export default {
         .filter((row) => row.group && row.policy)
         .map((row) => ({ group: row.group.trim(), policy: row.policy.trim() }));
     },
+    moduleTokenCommand() {
+      return `runagent -m ${this.instanceName} openbao-module-token create`;
+    },
+    snapshotRestoreCommand() {
+      const latest =
+        this.snapshotInfo && this.snapshotInfo.snapshots.length
+          ? this.snapshotInfo.snapshots[0].name
+          : "<snapshot>";
+      return `runagent -m ${this.instanceName} openbao-snapshot-restore ${latest}`;
+    },
     transitTokenCommand() {
       return `runagent -m ${this.instanceName} openbao-transit-token`;
     },
@@ -640,6 +761,7 @@ export default {
   created() {
     this.getConfiguration();
     this.getOpenbaoStatus();
+    this.listSnapshots();
   },
   methods: {
     async getConfiguration() {
@@ -707,6 +829,8 @@ export default {
       this.notifyRecipients = config.notify_recipients.join(", ");
       this.ipAllowlistText = config.ip_allowlist.join("\n");
       this.isVpnApiEnabled = config.vpn_api;
+      this.isPublicAccessEnabled = config.public_access;
+      this.snapshotKeep = config.snapshot_keep;
       this.transitAddress = config.transit_address;
       this.transitMount = config.transit_mount || "transit";
       this.transitKey = config.transit_key;
@@ -760,6 +884,29 @@ export default {
       this.openbaoStatus = taskResult.output;
       this.loading.getOpenbaoStatus = false;
     },
+    async listSnapshots() {
+      const taskAction = "list-snapshots";
+      const eventId = this.getUuid();
+      this.core.$root.$once(
+        `${taskAction}-completed-${eventId}`,
+        (taskContext, taskResult) => {
+          this.snapshotInfo = taskResult.output;
+        }
+      );
+      const res = await to(
+        this.createModuleTaskForApp(this.instanceName, {
+          action: taskAction,
+          extra: {
+            title: this.$t("action." + taskAction),
+            isNotificationHidden: true,
+            eventId,
+          },
+        })
+      );
+      if (res[0]) {
+        console.error(`error creating task ${taskAction}`, res[0]);
+      }
+    },
     addGroupPolicy() {
       this.groupPolicies.push({
         key: this.groupPolicyKey++,
@@ -804,6 +951,14 @@ export default {
         this.error.ldap_group_policies = this.$t(
           "settings.group_policy_incomplete"
         );
+        isValidationOk = false;
+      }
+      if (!this.isPublicAccessEnabled && !this.isVpnApiEnabled) {
+        isValidationOk = false;
+      }
+      const keep = Number(this.snapshotKeep);
+      if (!Number.isInteger(keep) || keep < 0 || keep > 90) {
+        this.error.snapshot_keep = this.$t("settings.snapshot_keep_invalid");
         isValidationOk = false;
       }
       if (isValidationOk && !this.validateRecipients()) {
@@ -908,6 +1063,8 @@ export default {
               : [],
             starter_kits: this.starterKits,
             vpn_api: this.isVpnApiEnabled,
+            public_access: this.isPublicAccessEnabled,
+            snapshot_keep: Number(this.snapshotKeep) || 0,
             transit_address: this.transitAddress,
             transit_mount: this.transitMount,
             transit_key: this.transitKey,
@@ -993,6 +1150,14 @@ export default {
 
 .mapping-remove {
   flex: none;
+}
+
+.snapshot-keep {
+  max-width: 12rem;
+}
+
+.break-word {
+  word-break: break-all;
 }
 
 .kit-item {

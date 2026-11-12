@@ -50,6 +50,9 @@ if "starter_kits" in request:
     agent.set_env("OPENBAO_STARTER_KITS", ",".join(request["starter_kits"]))
 
 set_bool("OPENBAO_VPN_API", "vpn_api")
+set_bool("OPENBAO_PUBLIC_ACCESS", "public_access")
+if "snapshot_keep" in request:
+    agent.set_env("OPENBAO_SNAPSHOT_KEEP", str(request["snapshot_keep"]))
 for field, var in [
         ("transit_address", "OPENBAO_TRANSIT_ADDRESS"),
         ("transit_mount", "OPENBAO_TRANSIT_MOUNT"),

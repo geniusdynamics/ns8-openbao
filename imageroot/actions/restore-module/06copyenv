@@ -31,6 +31,8 @@ for evar in [
         "OPENBAO_TRANSIT_MOUNT",
         "OPENBAO_TRANSIT_KEY",
         "OPENBAO_TRANSIT_TLS_SKIP_VERIFY",
+        "OPENBAO_PUBLIC_ACCESS",
+        "OPENBAO_SNAPSHOT_KEEP",
     ]:
     value = original_environment.get(evar, openbao.DEFAULTS.get(evar))
     if value is not None:

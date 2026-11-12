@@ -1,0 +1,58 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "list-snapshots output",
+    "$id": "http://schema.nethserver.org/openbao/list-snapshots-output.json",
+    "description": "Scheduled Raft snapshots kept on the node",
+    "examples": [
+        {
+            "snapshot_keep": 7,
+            "module_token": true,
+            "snapshots": [
+                {
+                    "name": "openbao-20261112-031500.snap",
+                    "size": 524288,
+                    "created": 1794460500
+                }
+            ]
+        }
+    ],
+    "type": "object",
+    "required": [
+        "snapshot_keep",
+        "module_token",
+        "snapshots"
+    ],
+    "properties": {
+        "snapshot_keep": {
+            "type": "integer",
+            "minimum": 0
+        },
+        "module_token": {
+            "type": "boolean",
+            "description": "A module token exists: scheduled snapshots can be taken"
+        },
+        "snapshots": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": [
+                    "name",
+                    "size",
+                    "created"
+                ],
+                "properties": {
+                    "name": {
+                        "type": "string"
+                    },
+                    "size": {
+                        "type": "integer"
+                    },
+                    "created": {
+                        "type": "integer",
+                        "description": "Unix time"
+                    }
+                }
+            }
+        }
+    }
+}

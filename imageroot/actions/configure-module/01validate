@@ -97,6 +97,11 @@ if request.get("auto_initialize", False):
     elif not user_domain:
         fail("auto_initialize", True, "auto_initialize_requires_user_domain")
 
+public = request.get("public_access", openbao.public_access(env))
+vpn_api = request.get("vpn_api", openbao.vpn_api_enabled(env))
+if not public and not vpn_api:
+    fail("public_access", False, "public_access_requires_vpn_api")
+
 if requested_mode == "transit":
     if not request.get("transit_address", env["OPENBAO_TRANSIT_ADDRESS"]):
         fail("transit_address", "", "transit_address_required")

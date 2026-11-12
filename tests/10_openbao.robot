@@ -60,7 +60,7 @@ Check if get-openbao-status reports the server state
     ${output}  ${rc} =    Execute Command    api-cli run module/${module_id}/get-openbao-status
     ...    return_rc=True
     Should Be Equal As Integers    ${rc}  0
-    &{status} =    Evaluate    json.loads('''${output}''')    modules=json
+    &{status} =    Evaluate    json.loads($output)    modules=json
     Should Be Equal    ${status.service_active}    ${True}
     Should Be Equal    ${status.initialized}    ${False}
     Should Be Equal    ${status.ui_url}    https://${HOST}/ui/
@@ -109,7 +109,7 @@ Check if the Prometheus target is published
     ...    return_rc=True
     Should Be Equal As Integers    ${rc}  0
     Should Contain    ${output}    /v1/sys/metrics
-    ${target} =    Evaluate    json.loads('''${output}''')[0]['targets'][0]    modules=json
+    ${target} =    Evaluate    json.loads($output)[0]['targets'][0]    modules=json
     Set Suite Variable    ${metrics_target}    ${target}
 
 Check if Prometheus metrics can be scraped from the cluster VPN address
@@ -170,7 +170,7 @@ Check if an active root token is detected
     ${output}  ${rc} =    Execute Command    api-cli run module/${module_id}/get-openbao-status
     ...    return_rc=True
     Should Be Equal As Integers    ${rc}  0
-    &{status} =    Evaluate    json.loads('''${output}''')    modules=json
+    &{status} =    Evaluate    json.loads($output)    modules=json
     Should Be Equal    ${status.module_token}    valid
     Should Be Equal    ${status.root_token_present}    ${True}
     ${output}  ${rc} =    Execute Command    runagent -m ${module_id} env BAO_TOKEN=${root_token} openbao-root-tokens
@@ -221,6 +221,69 @@ Check if secrets survive a restart with manual unseal
     Wait Until Keyword Succeeds    30s    2s    OpenBao Should Be Active    ${HOST}
     &{secret} =    Bao Request    ${HOST}    GET    secret/data/robot    ${EMPTY}    ${root_token}
     Should Be Equal    ${secret.data['data']['answer']}    42
+
+Check if scheduled snapshots are taken and listed
+    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host": "${HOST}", "http2https": false, "snapshot_keep": 3}'
+    ...    return_rc=True  return_stdout=False
+    Should Be Equal As Integers    ${rc}  0
+    Unseal If Sealed    ${HOST}    ${unseal_key}
+    ${rc} =    Execute Command    runagent -m ${module_id} openbao-maintenance
+    ...    return_rc=True  return_stdout=False
+    Should Be Equal As Integers    ${rc}  0
+    ${output}  ${rc} =    Execute Command    api-cli run module/${module_id}/list-snapshots
+    ...    return_rc=True
+    Should Be Equal As Integers    ${rc}  0
+    &{list} =    Evaluate    json.loads($output)    modules=json
+    Should Not Be Empty    ${list.snapshots}
+    Set Suite Variable    ${snapshot_name}    ${list.snapshots[0]['name']}
+
+Check if a snapshot restores a deleted secret
+    Bao Request    ${HOST}    DELETE    secret/metadata/robot    ${EMPTY}    ${root_token}
+    ${rc} =    Execute Command    curl -sS -f -o /dev/null -H 'Host: ${HOST}' -H 'X-Vault-Token: ${root_token}' http://127.0.0.1/v1/secret/data/robot
+    ...    return_rc=True  return_stdout=False
+    Should Not Be Equal As Integers    ${rc}  0
+    ${output}  ${rc} =    Execute Command    runagent -m ${module_id} env BAO_TOKEN=${root_token} openbao-snapshot-restore ${snapshot_name} --yes
+    ...    return_rc=True
+    Should Be Equal As Integers    ${rc}  0
+    Unseal If Sealed    ${HOST}    ${unseal_key}
+    Wait Until Keyword Succeeds    30s    2s    OpenBao Should Be Active    ${HOST}
+    &{secret} =    Bao Request    ${HOST}    GET    secret/data/robot    ${EMPTY}    ${root_token}
+    Should Be Equal    ${secret.data['data']['answer']}    42
+
+Check if the seal can be migrated from manual to automatic unseal
+    Unseal If Sealed    ${HOST}    ${unseal_key}
+    ${output}  ${rc} =    Execute Command    runagent -m ${module_id} openbao-seal-migrate start auto
+    ...    return_rc=True
+    Should Be Equal As Integers    ${rc}  0
+    Wait Until Keyword Succeeds    30s    2s    Seal Status Should Be Sealed    ${HOST}
+    Bao Request    ${HOST}    PUT    sys/unseal    {"key": "${unseal_key}", "migrate": true}
+    Wait Until Keyword Succeeds    30s    2s    OpenBao Should Be Active    ${HOST}
+    ${output}  ${rc} =    Execute Command    runagent -m ${module_id} openbao-seal-migrate finish
+    ...    return_rc=True
+    Should Be Equal As Integers    ${rc}  0
+    Wait Until Keyword Succeeds    60s    2s    OpenBao Should Be Active    ${HOST}
+    &{status} =    Seal Status    ${HOST}
+    Should Be Equal    ${status.type}    static
+    ${rc} =    Execute Command    runagent -m ${module_id} systemctl --user restart openbao.service
+    ...    return_rc=True  return_stdout=False
+    Should Be Equal As Integers    ${rc}  0
+    Wait Until Keyword Succeeds    60s    2s    OpenBao Should Be Active    ${HOST}
+    &{secret} =    Bao Request    ${HOST}    GET    secret/data/robot    ${EMPTY}    ${root_token}
+    Should Be Equal    ${secret.data['data']['answer']}    42
+
+Check if OpenBao can be reachable only on the cluster network
+    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host": "${HOST}", "http2https": false, "public_access": false}'
+    ...    return_rc=True  return_stdout=False
+    Should Not Be Equal As Integers    ${rc}  0
+    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host": "${HOST}", "http2https": false, "public_access": false, "vpn_api": true}'
+    ...    return_rc=True  return_stdout=False
+    Should Be Equal As Integers    ${rc}  0
+    ${url}  ${rc} =    Execute Command    redis-cli HGET module/${module_id}/srv/http/openbao url
+    ...    return_rc=True
+    Wait Until Keyword Succeeds    60s    2s    Execute Command And Expect Success    curl -sS -f ${url}/v1/sys/health
+    ${output}  ${rc} =    Execute Command    curl -sS -o /dev/null -w '\%{http_code}' -H 'Host: ${HOST}' http://127.0.0.1/v1/sys/seal-status
+    ...    return_rc=True
+    Should Be Equal    ${output}    404
 
 Check if openbao is removed correctly
     ${rc} =    Execute Command    remove-module --no-preserve ${module_id}
