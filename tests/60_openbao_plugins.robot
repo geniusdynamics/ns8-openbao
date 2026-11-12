@@ -65,8 +65,10 @@ Check if an enabled plugin is downloaded, installed and registered
     Should Be Equal    ${github.installed_version}    ${github.version}
     Wait Until Keyword Succeeds    30s    2s    Unseal OpenBao    ${HOST}    ${unseal_key}
     Wait Until Keyword Succeeds    60s    2s    OpenBao Should Be Active    ${HOST}
-    &{catalog} =    Bao Request    ${HOST}    GET    sys/plugins/catalog/auth/github    ${EMPTY}    ${root_token}
+    # The module declares plugins with their version: read that entry
+    &{catalog} =    Bao Request    ${HOST}    GET    sys/plugins/catalog/auth/github?version=${github.version}    ${EMPTY}    ${root_token}
     Should Be Equal    ${catalog.data['name']}    github
+    Should Be Equal    ${catalog.data['version']}    ${github.version}
 
 Check if the plugin can be enabled in OpenBao
     Bao Request    ${HOST}    POST    sys/auth/github    {"type": "github"}    ${root_token}

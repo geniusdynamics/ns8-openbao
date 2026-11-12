@@ -43,6 +43,11 @@ otherwise that mount stops working.
 3. The plugin directory is mounted **read-only** in the OpenBao container
    and owned by the module, not by the OpenBao process.
 
+Plugins are registered with their version: check one with
+`bao plugin info -version=<version> auth github` (the version is shown on
+the Plugins page). Enabling an auth method or secrets engine without a
+version uses it.
+
 OpenBao can also download plugins itself (`plugin_auto_download`), but
 that needs a plugin directory writable by the OpenBao process, which
 could then plant binaries that OpenBao executes, and a working registry
