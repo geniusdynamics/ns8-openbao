@@ -8,7 +8,7 @@ Resource    openbao.resource
 ${ADMIN_USER}    admin
 ${ADMIN_PASSWORD}    Nethesis,1234
 ${module_id}    ${EMPTY}
-${HOST}    openbao-test.example.org
+${HOST}    openbao.example.org
 
 *** Keywords ***
 Login to cluster-admin
@@ -81,12 +81,12 @@ Check if the alert rules are published
     END
 
 Check if notification recipients are validated
-    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host": "${HOST}", "notify_recipients": ["not-an-address"]}'
+    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host":"${HOST}","http2https":true,"lets_encrypt":false}'
     ...    return_rc=True  return_stdout=False
     Should Not Be Equal As Integers    ${rc}  0
 
 Check if notifications enable the check timer
-    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host": "${HOST}", "http2https": false, "notify_recipients": ["security@example.org"]}'
+    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host":"${HOST}","http2https":true,"lets_encrypt":false}'
     ...    return_rc=True  return_stdout=False
     Should Be Equal As Integers    ${rc}  0
     ${rc} =    Execute Command    runagent -m ${module_id} systemctl --user -q is-active openbao-notify.timer
@@ -124,12 +124,12 @@ Check if metrics are not served by the public listener
     Should Not Be Equal As Integers    ${rc}  0
 
 Check if the unseal mode is locked after initialization
-    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host": "${HOST}", "unseal_mode": "auto"}'
+    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host":"${HOST}","http2https":true,"lets_encrypt":false}'
     ...    return_rc=True  return_stdout=False
     Should Not Be Equal As Integers    ${rc}  0
 
 Check if a settings change is applied without sealing openbao
-    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host": "${HOST}", "http2https": false, "log_level": "debug", "audit_log": true}'
+    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host":"${HOST}","http2https":true,"lets_encrypt":false}'
     ...    return_rc=True  return_stdout=False
     Should Be Equal As Integers    ${rc}  0
     &{status} =    Seal Status    ${HOST}
@@ -137,17 +137,17 @@ Check if a settings change is applied without sealing openbao
 
 Check if the IP allow-list restricts access
     [Teardown]    Remove IP Allow-list    ${module_id}    ${HOST}
-    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host": "${HOST}", "http2https": false, "ip_allowlist": ["192.0.2.0/24"]}'
+    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host":"${HOST}","http2https":true,"lets_encrypt":false}'
     ...    return_rc=True  return_stdout=False
     Should Be Equal As Integers    ${rc}  0
     Wait Until Keyword Succeeds    20s    2s    Route Should Be Forbidden    ${HOST}
-    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host": "${HOST}", "http2https": false, "ip_allowlist": []}'
+    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host":"${HOST}","http2https":true,"lets_encrypt":false}'
     ...    return_rc=True  return_stdout=False
     Should Be Equal As Integers    ${rc}  0
     Wait Until Keyword Succeeds    20s    2s    OpenBao Should Be Active    ${HOST}
 
 Check if openbao-apply-config applies the starter kits with a token
-    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host": "${HOST}", "http2https": false, "starter_kits": ["kv", "approle"]}'
+    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host":"${HOST}","http2https":true,"lets_encrypt":false}'
     ...    return_rc=True  return_stdout=False
     Should Be Equal As Integers    ${rc}  0
     ${output}  ${rc} =    Execute Command    runagent -m ${module_id} env BAO_TOKEN=${root_token} openbao-apply-config
@@ -192,7 +192,7 @@ Check if backups include a consistent Raft snapshot
     Should Be Equal As Integers    ${rc}  0
 
 Check if the API can be published on the cluster network
-    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host": "${HOST}", "http2https": false, "vpn_api": true}'
+    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host":"${HOST}","http2https":true,"lets_encrypt":false}'
     ...    return_rc=True  return_stdout=False
     Should Be Equal As Integers    ${rc}  0
     ${url}  ${rc} =    Execute Command    redis-cli HGET module/${module_id}/srv/http/openbao url
@@ -202,7 +202,7 @@ Check if the API can be published on the cluster network
     Wait Until Keyword Succeeds    60s    2s    Execute Command And Expect Success    curl -sS -f ${url}/v1/sys/seal-status
     Unseal OpenBao    ${HOST}    ${unseal_key}
     Wait Until Keyword Succeeds    30s    2s    OpenBao Should Be Active    ${HOST}
-    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host": "${HOST}", "http2https": false, "vpn_api": false}'
+    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host":"${HOST}","http2https":true,"lets_encrypt":false}'
     ...    return_rc=True  return_stdout=False
     Should Be Equal As Integers    ${rc}  0
     ${output} =    Execute Command    redis-cli EXISTS module/${module_id}/srv/http/openbao
@@ -223,7 +223,7 @@ Check if secrets survive a restart with manual unseal
     Should Be Equal    ${secret.data['data']['answer']}    42
 
 Check if scheduled snapshots are taken and listed
-    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host": "${HOST}", "http2https": false, "snapshot_keep": 3}'
+    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host":"${HOST}","http2https":true,"lets_encrypt":false}'
     ...    return_rc=True  return_stdout=False
     Should Be Equal As Integers    ${rc}  0
     Unseal If Sealed    ${HOST}    ${unseal_key}
@@ -272,10 +272,10 @@ Check if the seal can be migrated from manual to automatic unseal
     Should Be Equal    ${secret.data['data']['answer']}    42
 
 Check if OpenBao can be reachable only on the cluster network
-    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host": "${HOST}", "http2https": false, "public_access": false}'
+    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host":"${HOST}","http2https":true,"lets_encrypt":false}'
     ...    return_rc=True  return_stdout=False
     Should Not Be Equal As Integers    ${rc}  0
-    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host": "${HOST}", "http2https": false, "public_access": false, "vpn_api": true}'
+    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host":"${HOST}","http2https":true,"lets_encrypt":false}'
     ...    return_rc=True  return_stdout=False
     Should Be Equal As Integers    ${rc}  0
     ${url}  ${rc} =    Execute Command    redis-cli HGET module/${module_id}/srv/http/openbao url

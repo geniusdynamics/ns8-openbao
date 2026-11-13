@@ -9,7 +9,7 @@ Resource    openbao.resource
 
 *** Variables ***
 ${module_id}    ${EMPTY}
-${HOST}    openbao-plugins.example.org
+${HOST}    openbao.example.org
 
 *** Keywords ***
 Plugin State
