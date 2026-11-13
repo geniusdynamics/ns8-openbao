@@ -7,7 +7,6 @@ Library    Collections
 Resource    openbao.resource
 
 *** Variables ***
-${HOST}    openbao.example.org
 ${primary}    ${EMPTY}
 ${member}    ${EMPTY}
 ${PRIMARY_HOST}    openbao-ha1.example.org
@@ -36,13 +35,13 @@ Secret Should Be Readable
 
 Configure Should Fail
     [Arguments]    ${module_id}    ${data}
-    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host":"${HOST}","http2https":true,"lets_encrypt":false}'
+    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '${data}'
     ...    return_rc=True  return_stdout=False
     Should Not Be Equal As Integers    ${rc}  0
 
 Configure Should Succeed
     [Arguments]    ${module_id}    ${data}
-    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host":"${HOST}","http2https":true,"lets_encrypt":false}'
+    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '${data}'
     ...    return_rc=True  return_stdout=False
     Should Be Equal As Integers    ${rc}  0
 

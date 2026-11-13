@@ -4,7 +4,7 @@ Resource    openbao.resource
 
 *** Variables ***
 ${module_id}    ${EMPTY}
-${HOST}    openbao.example.org
+${HOST}    openbao-auto.example.org
 
 *** Test Cases ***
 Check if openbao is installed correctly
