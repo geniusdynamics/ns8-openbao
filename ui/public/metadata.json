@@ -2,7 +2,8 @@
   "name": "OpenBao",
   "upstream_name": "OpenBao 2.7",
   "description": {
-    "en": "Secrets manager to store and control access to tokens, passwords, certificates and encryption keys"
+    "en": "Secrets manager to store and control access to tokens, passwords, certificates and encryption keys",
+    "it": "OpenBao è un archivio di segreti open source per gestire token, password e certificati."
   },
   "categories": [
     "security"
