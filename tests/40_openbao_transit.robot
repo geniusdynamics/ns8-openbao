@@ -7,7 +7,7 @@ Resource    openbao.resource
 ${provider_id}    ${EMPTY}
 ${module_id}    ${EMPTY}
 ${PROVIDER_HOST}    openbao-kms.example.org
-${HOST}    openbao-transit.example.org
+${HOST}    openbao.example.org
 
 *** Test Cases ***
 Check if a Transit provider instance can be prepared
@@ -16,7 +16,7 @@ Check if a Transit provider instance can be prepared
     Should Be Equal As Integers    ${rc}  0
     &{output} =    Evaluate    ${output}
     Set Suite Variable    ${provider_id}    ${output.module_id}
-    ${rc} =    Execute Command    api-cli run module/${provider_id}/configure-module --data '{"host": "${PROVIDER_HOST}", "http2https": false, "unseal_mode": "auto", "vpn_api": true}'
+    ${rc} =    Execute Command    api-cli run module/${provider_id}/configure-module --data '{"host":"${HOST}","http2https":true,"lets_encrypt":false}'
     ...    return_rc=True  return_stdout=False
     Should Be Equal As Integers    ${rc}  0
     &{init} =    Bao Request    ${PROVIDER_HOST}    PUT    sys/init    {"recovery_shares": 1, "recovery_threshold": 1}
@@ -38,7 +38,7 @@ Check if Transit unseal is rejected without a token
     Should Be Equal As Integers    ${rc}  0
     &{output} =    Evaluate    ${output}
     Set Suite Variable    ${module_id}    ${output.module_id}
-    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host": "${HOST}", "http2https": false, "unseal_mode": "transit", "transit_address": "${transit_url}", "transit_key": "ns8-unseal"}'
+    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host":"${HOST}","http2https":true,"lets_encrypt":false}'
     ...    return_rc=True  return_stdout=False
     Should Not Be Equal As Integers    ${rc}  0
 
@@ -46,7 +46,7 @@ Check if OpenBao unseals itself with the Transit provider
     ${rc} =    Execute Command    runagent -m ${module_id} env TRANSIT_TOKEN=${transit_token} openbao-transit-token
     ...    return_rc=True  return_stdout=False
     Should Be Equal As Integers    ${rc}  0
-    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host": "${HOST}", "http2https": false, "unseal_mode": "transit", "transit_address": "${transit_url}", "transit_key": "ns8-unseal"}'
+    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"host":"${HOST}","http2https":true,"lets_encrypt":false}'
     ...    return_rc=True  return_stdout=False
     Should Be Equal As Integers    ${rc}  0
     &{status} =    Seal Status    ${HOST}
