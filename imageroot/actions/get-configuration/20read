@@ -10,6 +10,7 @@ import os
 import sys
 import agent
 import openbao
+import openbao_auth
 
 env = openbao.read_environment()
 
@@ -61,4 +62,9 @@ config = {
     "smarthost_enabled": smarthost_enabled,
 }
 
+config.update(openbao_auth.settings(env))
+config["oidc_providers"] = [
+    {key: item[key] for key in ("id", "label", "domains")}
+    for item in openbao_auth.providers().values()
+]
 json.dump(config, fp=sys.stdout)

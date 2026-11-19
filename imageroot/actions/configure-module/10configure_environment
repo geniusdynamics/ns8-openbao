@@ -11,6 +11,7 @@ import os
 import sys
 import agent
 import openbao
+from openbao_auth import OIDC_FIELDS, settings
 
 request = json.load(sys.stdin)
 env = openbao.read_environment()
@@ -31,6 +32,13 @@ user_domain = request.get("user_domain", env["OPENBAO_USER_DOMAIN"])
 agent.set_env("OPENBAO_USER_DOMAIN", user_domain)
 admin_group = request.get("ldap_admin_group", env["OPENBAO_LDAP_ADMIN_GROUP"]).strip()
 agent.set_env("OPENBAO_LDAP_ADMIN_GROUP", admin_group if user_domain else "")
+
+oidc = settings(env)
+oidc.update({field: request[field] for field in OIDC_FIELDS if field in request})
+if not oidc["oidc_provider"]:
+    oidc.update(oidc_domain="", oidc_link_identities=False)
+for field, var in OIDC_FIELDS.items():
+    agent.set_env(var, str(oidc[field]))
 
 # Self-initialization only matters before OpenBao is initialized: drop the
 # flag afterwards, so the bind password is no longer passed to the server.

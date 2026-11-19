@@ -16,4 +16,5 @@ import openbao
 
 env = openbao.read_environment()
 domain = env["OPENBAO_USER_DOMAIN"]
-agent.bind_user_domains([domain] if domain else [], check=True)
+oidc_domain = env["OPENBAO_OIDC_DOMAIN"] if env["OPENBAO_OIDC_PROVIDER"] else ""
+agent.bind_user_domains(sorted({domain, oidc_domain} - {""}), check=True)
