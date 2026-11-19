@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+import argparse
+import fcntl
+import getpass
+import os
+import sys
+from urllib.error import HTTPError, URLError
+
+import openbao
+from openbao_auth import AuthError, apply_oidc, aliases_to_link, recovery
+
+parser = argparse.ArgumentParser(description="Manage OpenBao OIDC, identity links, or local recovery")
+commands = parser.add_subparsers(dest="command", required=True)
+commands.add_parser("apply", help="apply the NS8 OIDC settings")
+link = commands.add_parser("link", help="link two verified aliases from the same directory")
+link.add_argument("ldap_name")
+link.add_argument("oidc_subject")
+local = commands.add_parser("recovery", help="create, rotate, or disable the local recovery account")
+local.add_argument("action", choices=("set", "disable"))
+args = parser.parse_args()
+
+status = openbao.get_seal_status()
+if not status or not status.get("initialized") or status.get("sealed"):
+    sys.exit("OpenBao must be running, initialized, and unsealed")
+token = os.getenv("BAO_TOKEN") or getpass.getpass("OpenBao administrator token: ")
+if not token:
+    sys.exit("An OpenBao administrator token is required")
+
+
+def call(path, method="GET", data=None):
+    return openbao.api_request(path, method=method, data=data, token=token, timeout=30)
+
+
+try:
+    with open(".openbao-auth.lock", "a", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if args.command == "apply":
+            apply_oidc(call, openbao.read_environment())
+        elif args.command == "link":
+            alias, entity = aliases_to_link(call, openbao.read_environment(), args.ldap_name, args.oidc_subject)
+            if alias is None:
+                print(f"Both aliases already use entity {entity}")
+            else:
+                print(f"OIDC alias {alias} will use LDAP entity {entity} and its permissions.")
+                if input("Type LINK to confirm these aliases belong to the same person: ") != "LINK":
+                    sys.exit("Identity link cancelled")
+                call(f"identity/entity-alias/id/{alias}", method="POST", data={"canonical_id": entity})
+                print("Identity linked. Review and revoke any outstanding tokens from before the link.")
+        elif args.action == "set":
+            password = getpass.getpass("New password for breakglass: ")
+            if password != getpass.getpass("Confirm new password: "):
+                sys.exit("The passwords do not match")
+            recovery(call, args.action, password)
+            print("Recovery account ready: bao login -method=userpass -path=ns8-recovery username=breakglass")
+        else:
+            recovery(call, args.action)
+            print("Recovery login disabled and its tokens revoked")
+except AuthError as error:
+    sys.exit(str(error))
+except HTTPError as error:
+    # OpenBao error bodies and provider registration diagnostics may contain secrets.
+    sys.exit(f"An OpenBao authentication operation failed (HTTP {error.code}). Check server logs.")
+except URLError:
+    sys.exit("Could not reach the local OpenBao server")

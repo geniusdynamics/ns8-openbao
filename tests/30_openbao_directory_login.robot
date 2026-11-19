@@ -72,6 +72,27 @@ Check if a domain administrator can log in
     Should Contain    ${login.auth.policies}    ns8-admin
     Set Suite Variable    ${token}    ${login.auth.client_token}
 
+Check if local recovery works alongside LDAP
+    ${password} =    Set Variable    OpenBao-Local-Recovery-Test-Credential
+    Execute Command And Expect Success
+    ...    printf '%s\\n' '${password}' '${password}' | runagent -m ${module_id} env BAO_TOKEN='${token}' openbao-auth recovery set
+    &{auth} =    Bao Request    ${HOST}    POST    auth/ns8-recovery/login/breakglass    {"password":"${password}"}
+    Should Contain    ${auth.auth.policies}    ns8-admin
+    &{mounts} =    Bao Request    ${HOST}    GET    sys/auth    ${EMPTY}    ${auth.auth.client_token}
+    Dictionary Should Contain Key    ${mounts.data}    ldap/
+    Dictionary Should Contain Key    ${mounts.data}    ns8-recovery/
+    Execute Command And Expect Success
+    ...    runagent -m ${module_id} env BAO_TOKEN='${token}' openbao-auth recovery disable
+    &{mounts} =    Bao Request    ${HOST}    GET    sys/auth    ${EMPTY}    ${token}
+    Dictionary Should Contain Key    ${mounts.data}    ldap/
+    Dictionary Should Not Contain Key    ${mounts.data}    ns8-recovery/
+
+Check if OIDC is disabled by default
+    ${output} =    Execute Command    api-cli run module/${module_id}/get-configuration
+    &{config} =    Evaluate    json.loads($output)    json
+    Should Be Empty    ${config.oidc_provider}
+    Should Be Equal    ${config.oidc_link_identities}    ${False}
+
 Check if the group policies and starter kits were applied
     &{group} =    Bao Request    ${HOST}    GET    auth/ldap/groups/domain%20admins    ${EMPTY}    ${token}
     Should Contain    ${group.data.policies}    ns8-admin

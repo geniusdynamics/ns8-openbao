@@ -131,3 +131,103 @@ runagent -m openbao1 openbao-apply-config
 ```
 
 `openbao-setup-ldap`, the command name of release 1.0.0, still works.
+
+## NS8 OpenID Connect
+
+In **Settings → OpenID Connect**, choose a published NethServer IdP, Keycloak,
+or LemonLDAP::NG provider and an NS8 user domain. To use OIDC only on a new
+instance, leave **Directory login** unset. To offer both methods, configure the
+LDAP domain alongside OIDC. The two domains may be different. Existing
+instances start with the module's OIDC option disabled.
+
+Save Settings and run the following command after OpenBao has been initialized
+and unsealed. It prompts for an OpenBao administrator token (or reads
+`BAO_TOKEN`). The command registers the HTTPS callbacks with the NS8 provider
+and gives OpenBao the client credentials. OpenBao stores them in its encrypted
+storage. The NS8 settings action stores the provider and domain selection.
+
+```bash
+runagent -m openbao1 openbao-auth apply
+```
+
+Use the OpenBao HTTPS route. The provider's issuer must also be reachable
+over HTTPS with a certificate trusted by the OpenBao container. In a Raft
+cluster, run `apply` from the primary NS8 module. The configuration is
+replicated through OpenBao.
+
+Use the OIDC method shown on OpenBao's login page. For CLI login, copy the
+command printed by `openbao-auth apply`; it specifies the auth mount and
+`callbackmode=direct`. Accounts signing in with the module's default OIDC
+role receive OpenBao's standard `default` policy. They get no secret or
+administrator privileges from the role. Grant access through OpenBao
+identity policies, or define additional roles bound to authoritative
+provider claims. The module does not reuse LDAP group names as OIDC
+authorization claims.
+
+To remove module-managed OIDC, select **Disabled** and run `openbao-auth apply`
+again. Removing the mount revokes its issued tokens. If you are moving an
+existing installation to OIDC only, verify local recovery and OIDC access
+before disabling an existing LDAP mount with `bao auth disable ldap`. Clearing
+the NS8 LDAP setting removes the NS8 domain binding when OIDC does not use the
+same domain. OpenBao leaves the LDAP mount in place until you explicitly
+disable it.
+
+After changing the OpenBao hostname, moving or restoring the module under a
+new instance ID, or changing the provider, run `openbao-auth apply` again to
+refresh client registration. A provider or issuer change uses a different
+mount accessor, so a subject from the new issuer cannot inherit the previous
+issuer's identity by reusing the same identifier.
+
+### Shared identities for one directory
+
+When both methods use the same NS8 user domain, enable **Allow linking LDAP
+and OIDC identities** in Settings. After someone has signed in with both
+methods, verify that the exact LDAP alias and OIDC `sub` belong to the same
+directory account. OpenBao shows the alias names and their auth mounts on
+the Identity page. Run:
+
+```bash
+runagent -m openbao1 openbao-auth link <ldap-alias> <oidc-subject>
+```
+
+The command checks the active LDAP mount against the selected domain and
+requires an explicit confirmation. It moves the OIDC alias to the existing
+LDAP entity. Future logins use that entity's identity policies and audit ID,
+while the two auth methods still issue their own tokens and method-specific
+policies. Review outstanding tokens issued before the link and revoke them
+as needed. The command asks you to review the entity in OpenBao if it already
+has policies, groups, or other aliases. For unrelated domains, configure
+their identities independently.
+
+### Local recovery account
+
+The existing bootstrap break-glass token for self-initialized instances
+expires after 32 days. Before relying on directory login, you can opt in to
+a dedicated local `breakglass` account. Create it while OpenBao is unsealed
+and you still have administrator access:
+
+```bash
+runagent -m openbao1 openbao-auth recovery set
+```
+
+The command asks for the administrator token and a fresh randomly generated
+password of 24 to 72 bytes. Store the password in an offline recovery vault.
+The module never saves it in NS8 settings. OpenBao stores its hash within the
+encrypted Raft data. Run the same command to rotate it and revoke tokens
+issued by the old login. There is no default local password.
+
+If LDAP and OIDC are both unavailable, sign in without them:
+
+```bash
+bao login -method=userpass -path=ns8-recovery username=breakglass
+```
+
+In the web UI, choose **Username** and enter `ns8-recovery` as the mount path,
+or open `https://<host>/ui/vault/auth?with=ns8-recovery%2F`. The account has the
+`ns8-admin` policy, with a 15-minute initial token lifetime and a one-hour
+maximum. It requires OpenBao to be reachable and unsealed. Keep the unseal
+or recovery material required by your initialization mode.
+
+To remove the local account and revoke its issued tokens, run
+`runagent -m openbao1 openbao-auth recovery disable` with an administrator
+token.
