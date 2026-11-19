@@ -95,6 +95,43 @@
         "ha_candidates"
     ],
     "properties": {
+        "oidc_provider": {
+            "type": "string",
+            "description": "NS8 provider UUID, or empty to disable module-managed OIDC"
+        },
+        "oidc_domain": {
+            "type": "string",
+            "description": "NS8 user domain served by the OIDC provider"
+        },
+        "oidc_link_identities": {
+            "type": "boolean",
+            "description": "Permit administrator-reviewed alias linking for LDAP and OIDC on the same domain"
+        },
+        "oidc_providers": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "label",
+                    "domains"
+                ],
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    },
+                    "label": {
+                        "type": "string"
+                    },
+                    "domains": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "host": {
             "type": "string",
             "description": "Host name of the OpenBao API and web UI. Empty if not configured yet"

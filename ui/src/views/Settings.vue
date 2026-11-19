@@ -365,6 +365,86 @@
                 class="maxwidth"
               />
             </template>
+            <!-- OpenID Connect -->
+            <h4 class="section-title">{{ $t("settings.section_oidc") }}</h4>
+            <p class="section-description">
+              {{ $t("settings.oidc_description") }}
+            </p>
+            <NsComboBox
+              :value="oidcProvider || 'disabled'"
+              :options="oidcProviderOptions"
+              :title="$t('settings.oidc_provider')"
+              :label="$t('settings.oidc_provider_placeholder')"
+              :helper-text="
+                oidcProviders.length ? '' : $t('settings.oidc_no_providers')
+              "
+              :invalid-message="$t(error.oidc_provider)"
+              :disabled="isFormDisabled"
+              class="mg-bottom maxwidth"
+              ref="oidc_provider"
+              @change="onOidcProviderChange"
+            />
+            <NsComboBox
+              v-if="oidcProvider"
+              v-model="oidcDomain"
+              :options="oidcDomainOptions"
+              :title="$t('settings.oidc_domain')"
+              :label="$t('settings.user_domain_placeholder')"
+              :helper-text="
+                oidcDomains.length || !selectedOidcProvider
+                  ? ''
+                  : $t('settings.oidc_no_domains')
+              "
+              :invalid-message="$t(error.oidc_domain)"
+              :disabled="isFormDisabled"
+              class="mg-bottom maxwidth"
+              ref="oidc_domain"
+            />
+            <div v-if="canLinkOidcIdentities" class="maxwidth mg-bottom">
+              <NsCheckbox
+                value="linkOidcIdentities"
+                v-model="linkOidcIdentities"
+                :label="$t('settings.oidc_link_identities')"
+                :disabled="isFormDisabled"
+                ref="oidc_link_identities"
+              />
+              <p class="section-description">
+                {{ $t("settings.oidc_link_description") }}
+              </p>
+            </div>
+            <NsInlineNotification
+              v-if="error.oidc_link_identities"
+              kind="error"
+              :title="$t(error.oidc_link_identities)"
+              :showCloseButton="false"
+              class="maxwidth mg-bottom"
+            />
+            <div class="maxwidth mg-bottom">
+              <p class="section-description">
+                {{ $t("settings.oidc_apply_description") }}
+              </p>
+              <NsCodeSnippet
+                :copyTooltip="$t('settings.copy_to_clipboard')"
+                :copy-feedback="$t('settings.copied_to_clipboard')"
+                :feedback-aria-label="$t('settings.copied_to_clipboard')"
+                hideExpandButton
+                >{{ applyOidcCommand }}</NsCodeSnippet
+              >
+            </div>
+            <!-- local recovery -->
+            <h4 class="section-title">{{ $t("settings.section_recovery") }}</h4>
+            <div class="maxwidth mg-bottom">
+              <p class="section-description">
+                {{ $t("settings.recovery_description") }}
+              </p>
+              <NsCodeSnippet
+                :copyTooltip="$t('settings.copy_to_clipboard')"
+                :copy-feedback="$t('settings.copied_to_clipboard')"
+                :feedback-aria-label="$t('settings.copied_to_clipboard')"
+                hideExpandButton
+                >{{ recoveryAccountCommand }}</NsCodeSnippet
+              >
+            </div>
             <!-- starter kits -->
             <h4 class="section-title">
               {{ $t("settings.section_starter_kits") }}
@@ -736,6 +816,9 @@ export default {
       isAuditLogEnabled: false,
       userDomain: "",
       ldapAdminGroup: "",
+      oidcProvider: "",
+      oidcDomain: "",
+      linkOidcIdentities: false,
       isAutoInitializeEnabled: false,
       domainGroups: [],
       notifyRecipients: "",
@@ -776,6 +859,9 @@ export default {
         audit_log: "",
         user_domain: "",
         ldap_admin_group: "",
+        oidc_provider: "",
+        oidc_domain: "",
+        oidc_link_identities: "",
         auto_initialize: "",
         notify_recipients: "",
         ip_allowlist: "",
@@ -811,6 +897,79 @@ export default {
     },
     groupOptions() {
       return this.domainGroups.map((g) => ({ name: g, label: g, value: g }));
+    },
+    oidcProviders() {
+      return (this.savedConfig && this.savedConfig.oidc_providers) || [];
+    },
+    selectedOidcProvider() {
+      return this.oidcProviders.find(
+        (provider) => provider.id === this.oidcProvider
+      );
+    },
+    oidcProviderOptions() {
+      const options = [
+        {
+          name: "disabled",
+          label: this.$t("settings.disabled"),
+          value: "disabled",
+        },
+        ...this.oidcProviders.map(({ id, label }) => ({
+          name: id,
+          label,
+          value: id,
+        })),
+      ];
+      const savedProvider = this.savedConfig && this.savedConfig.oidc_provider;
+      if (
+        savedProvider &&
+        !options.some(({ value }) => value === savedProvider)
+      ) {
+        options.push({
+          name: savedProvider,
+          label: this.$t("settings.oidc_provider_unavailable"),
+          value: savedProvider,
+        });
+      }
+      return options;
+    },
+    oidcDomains() {
+      return this.selectedOidcProvider ? this.selectedOidcProvider.domains : [];
+    },
+    oidcDomainOptions() {
+      const options = this.oidcDomains.map((domain) => ({
+        name: domain,
+        label: domain,
+        value: domain,
+      }));
+      const config = this.savedConfig;
+      if (
+        config &&
+        this.oidcProvider === config.oidc_provider &&
+        config.oidc_domain &&
+        !this.oidcDomains.includes(config.oidc_domain)
+      ) {
+        options.push({
+          name: config.oidc_domain,
+          label: this.$t("settings.oidc_saved_domain", {
+            domain: config.oidc_domain,
+          }),
+          value: config.oidc_domain,
+        });
+      }
+      return options;
+    },
+    canLinkOidcIdentities() {
+      return (
+        !!this.oidcProvider &&
+        !!this.userDomain &&
+        this.userDomain === this.oidcDomain
+      );
+    },
+    applyOidcCommand() {
+      return `runagent -m ${this.instanceName} openbao-auth apply`;
+    },
+    recoveryAccountCommand() {
+      return `runagent -m ${this.instanceName} openbao-auth recovery set`;
     },
     policyOptions() {
       const names =
@@ -872,6 +1031,13 @@ export default {
         this.host !== this.savedConfig.host ||
         this.unsealMode !== this.savedConfig.unseal_mode
       );
+    },
+  },
+  watch: {
+    canLinkOidcIdentities(available) {
+      if (!available) {
+        this.linkOidcIdentities = false;
+      }
     },
   },
   beforeRouteEnter(to, from, next) {
@@ -947,6 +1113,10 @@ export default {
       this.$nextTick(() => {
         this.userDomain = config.user_domain;
         this.ldapAdminGroup = config.ldap_admin_group;
+        this.oidcProvider = config.oidc_provider || "";
+        this.oidcDomain = config.oidc_domain || "";
+        this.linkOidcIdentities =
+          this.canLinkOidcIdentities && !!config.oidc_link_identities;
         if (this.userDomain) {
           this.listDomainGroups();
         }
@@ -1054,6 +1224,14 @@ export default {
         this.listDomainGroups();
       }
     },
+    onOidcProviderChange(value) {
+      const provider = value === "disabled" ? "" : value || "";
+      if (provider !== this.oidcProvider) {
+        this.oidcProvider = provider;
+        this.oidcDomain = "";
+        this.linkOidcIdentities = false;
+      }
+    },
     validateConfigureModule() {
       this.clearErrors(this);
 
@@ -1071,6 +1249,22 @@ export default {
 
         if (isValidationOk) {
           this.focusElement("ldap_admin_group");
+        }
+        isValidationOk = false;
+      }
+      if (this.oidcProvider && !this.isPublicAccessEnabled) {
+        this.error.oidc_provider = "settings.oidc_requires_web_access";
+        if (isValidationOk) {
+          this.focusElement("oidc_provider");
+        }
+        isValidationOk = false;
+      }
+      if (this.oidcProvider && !this.oidcDomain) {
+        this.error.oidc_domain = this.oidcDomains.length
+          ? "common.required"
+          : "settings.oidc_no_domains";
+        if (isValidationOk) {
+          this.focusElement("oidc_domain");
         }
         isValidationOk = false;
       }
@@ -1189,6 +1383,10 @@ export default {
             audit_log: this.isAuditLogEnabled,
             user_domain: this.userDomain,
             ldap_admin_group: this.userDomain ? this.ldapAdminGroup : "",
+            oidc_provider: this.oidcProvider,
+            oidc_domain: this.oidcProvider ? this.oidcDomain : "",
+            oidc_link_identities:
+              this.canLinkOidcIdentities && this.linkOidcIdentities,
             auto_initialize:
               this.haRole !== "member" &&
               !!this.userDomain &&

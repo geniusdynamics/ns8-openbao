@@ -49,6 +49,7 @@ request = {
     "ldap_group_policies": [],
     "user_domain": "",
     "ldap_admin_group": "",
+    "oidc_link_identities": False,
 }
 
 # The user domain might not exist in this cluster: keep directory login
@@ -61,12 +62,16 @@ if domain and domain in [d["name"] for d in openbao.list_user_domains()]:
 elif domain:
     print(f"<4>User domain {domain} is not available: directory login binding dropped", file=sys.stderr)
 
+if request["user_domain"] == env["OPENBAO_OIDC_DOMAIN"]:
+    request["oidc_link_identities"] = openbao.is_true(env["OPENBAO_OIDC_LINK_IDENTITIES"])
+
 configure_retval = agent.tasks.run(agent_id=os.environ["AGENT_ID"], action="configure-module", data=request)
 if configure_retval["exit_code"] != 0 and request["user_domain"]:
     # For example the administrators group does not exist in this cluster
     print("<4>configure-module failed with directory login: retrying without it", file=sys.stderr)
     request["user_domain"] = ""
     request["ldap_admin_group"] = ""
+    request["oidc_link_identities"] = False
     request["ldap_group_policies"] = []
     configure_retval = agent.tasks.run(agent_id=os.environ["AGENT_ID"], action="configure-module", data=request)
 agent.assert_exp(configure_retval["exit_code"] == 0, "The configure-module subtask failed!")

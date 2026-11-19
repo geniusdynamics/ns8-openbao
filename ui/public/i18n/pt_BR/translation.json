@@ -30,6 +30,23 @@
         "cannot_create_task": "Cannot create task {action}"
     },
     "settings": {
+        "section_oidc": "OpenID Connect (OIDC)",
+        "oidc_description": "Use um provedor publicado no NS8 para o login único. É possível ativar OIDC junto com LDAP.",
+        "oidc_provider": "Provedor OIDC",
+        "oidc_provider_placeholder": "Escolha um provedor OIDC",
+        "oidc_no_providers": "Não há provedores OIDC publicados neste cluster.",
+        "oidc_provider_unavailable": "O provedor OIDC salvo está indisponível",
+        "oidc_domain": "Domínio de usuários OIDC",
+        "oidc_no_domains": "Este provedor não tem domínios de usuários disponíveis.",
+        "oidc_domain_unavailable": "O domínio de usuários selecionado está indisponível para este provedor.",
+        "oidc_saved_domain": "{domain} (indisponível)",
+        "oidc_link_identities": "LDAP e OIDC usam o mesmo diretório de usuários",
+        "oidc_link_description": "Permita que um administrador do OpenBao vincule contas verificadas deste diretório. Salvar esta configuração não vincula contas automaticamente.",
+        "oidc_same_domain_required": "Para vincular identidades, LDAP e OIDC devem usar o mesmo domínio de usuários do NS8.",
+        "oidc_requires_web_access": "OIDC requer que a rota web do OpenBao esteja habilitada.",
+        "oidc_apply_description": "Após salvar, execute este comando no nó para aplicar ou remover OIDC. Informe um token de administrador do OpenBao quando solicitado.",
+        "section_recovery": "Acesso local de emergência",
+        "recovery_description": "Defina uma senha local de emergência com o OpenBao aberto para poder acessar se LDAP e OIDC estiverem indisponíveis. Execute este comando no nó.",
         "title": "Settings"
     }
 }

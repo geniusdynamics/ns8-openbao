@@ -15,6 +15,8 @@ The module runs OpenBao as a rootless container with:
   access
 - **manual (Shamir), automatic (static key) or Transit unseal**, with seal
   migration
+- **optional OpenID Connect** with a published NS8 provider, alongside LDAP or on its own
+- **local recovery login** with an opt-in administrator account independent of external providers
 - **directory login** with a NethServer user domain (OpenLDAP or Active
   Directory), group policies and starter kits, optionally configured
   automatically at initialization
@@ -65,7 +67,7 @@ step by step, and what to do when credentials are lost.
 | [First-time setup](docs/first-time-setup.md) | the setup wizard, setups A–D, getting the first keys and tokens, lost credentials |
 | [Configuration reference](docs/configuration.md) | every `configure-module` parameter, reading the configuration and state |
 | [Unseal modes](docs/unseal.md) | manual, automatic and Transit unseal, seal migration |
-| [Directory login](docs/directory-login.md) | LDAP / Active Directory login, default NethServer domain accounts, group policies, starter kits, applying settings that need a token |
+| [Directory login](docs/directory-login.md) | LDAP / Active Directory, NS8 OIDC, shared identities, local recovery, policies and starter kits |
 | [Plugins](docs/plugins.md) | the plugin catalog, how plugins are installed, enabling and configuring them in OpenBao |
 | [Cluster network and metrics](docs/networking.md) | the cluster network API, VPN-only access, Prometheus metrics |
 | [Operations](docs/operations.md) | notifications, module token, snapshots, backup and restore, updates (including from 1.0.0), uninstall, troubleshooting |

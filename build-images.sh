@@ -49,7 +49,7 @@ buildah add "${container}" ui/dist /ui
 # - pinned OpenBao image: Renovate tracks the org.nethserver.images label
 # - core 3.13+ provides agent.set_route() and agent.get_route()
 buildah config --entrypoint=/ \
-    --label="org.nethserver.authorizations=traefik@node:routeadm cluster:accountconsumer node:portsadm" \
+    --label="org.nethserver.authorizations=traefik@node:routeadm cluster:accountconsumer node:portsadm idp@any:clientadm keycloak@any:clientadm lemonldapng@any:clientadm" \
     --label="org.nethserver.tcp-ports-demand=4" \
     --label="org.nethserver.rootfull=0" \
     --label="org.nethserver.min-core=3.13.0" \

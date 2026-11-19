@@ -11,6 +11,7 @@ import os
 import sys
 import agent
 import openbao
+import openbao_auth
 
 agent.set_weight(os.path.basename(__file__), 0)  # Validation step, no task progress
 
@@ -153,6 +154,9 @@ if requested_mode == "transit" and not target:
         fail("transit_key", "", "transit_key_required")
     if not os.path.exists(openbao.TRANSIT_TOKEN_FILE):
         fail("unseal_mode", requested_mode, "transit_token_missing")
+
+for field, error in openbao_auth.selection_errors(request, env):
+    fail(field, request.get(field, ""), error)
 
 if errors:
     agent.set_status("validation-failed")
