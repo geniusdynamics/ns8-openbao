@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# Client provisioning turned off: revoke the tokens issued to client
+# modules and the provisioner token. Turning it on needs an administrator
+# token, given on the node only:
+#
+#   runagent -m openbao1 openbao-client-provisioner create
+#
+# If OpenBao is sealed, the revocation is retried by openbao-maintenance.
+#
+
+import os
+import sys
+import openbao_clients as clients
+
+if not clients.enabled() and os.path.exists(clients.PROVISIONER_TOKEN_FILE):
+    try:
+        clients.disable()
+    except Exception as ex:
+        print(f"<4>Cannot disable client provisioning now: {type(ex).__name__}", file=sys.stderr)
+elif clients.enabled() and not os.path.exists(clients.PROVISIONER_TOKEN_FILE):
+    print(f"Client provisioning: run 'runagent -m {os.environ['MODULE_ID']} openbao-client-provisioner create'"
+          " with an administrator token to finish enabling it", file=sys.stderr)

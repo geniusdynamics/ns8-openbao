@@ -37,6 +37,7 @@ for evar in [
         "OPENBAO_PUBLIC_ACCESS",
         "OPENBAO_SNAPSHOT_KEEP",
         "OPENBAO_PLUGINS",
+        "OPENBAO_CLIENT_PROVISIONING",
         # Stored in the Raft data: it must not change
         "OPENBAO_RAFT_NODE_ID",
     ]:

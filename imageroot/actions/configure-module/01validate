@@ -155,6 +155,11 @@ if requested_mode == "transit" and not target:
     if not os.path.exists(openbao.TRANSIT_TOKEN_FILE):
         fail("unseal_mode", requested_mode, "transit_token_missing")
 
+# Client provisioning runs on the instance that holds the provisioner
+# token: a standalone or primary instance, never an HA member
+if request.get("client_provisioning") and role == "member":
+    fail("client_provisioning", True, "client_provisioning_ha_member")
+
 for field, error in openbao_auth.selection_errors(request, env):
     fail(field, request.get(field, ""), error)
 

@@ -22,6 +22,10 @@ Part of the [ns8-openbao documentation](../README.md#documentation).
   journal: view them from the *System logs* page of the application.
 - Revoke the root token after the initial setup; generate a new one with
   `bao operator generate-root` when needed.
+- Client provisioning (off by default) gives approved modules
+  response-wrapped tokens confined by static templated policies; the
+  provisioner token on the node cannot write policies or roles. See the
+  [security model](client-provisioning.md#security-model).
 
 ## Not implemented on purpose
 

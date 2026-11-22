@@ -1,0 +1,30 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# Reader-safe status of a client module: is provisioning enabled, is the
+# module approved, what it may request. No secrets. A module caller gets
+# its own status when module_id is omitted.
+#
+
+import json
+import os
+import sys
+import openbao_clients as clients
+
+data = json.load(sys.stdin)
+module_id = data.get("module_id", "")
+if not module_id:
+    user = os.environ.get("AGENT_TASK_USER", "")
+    module_id = user.removeprefix("module/") if user.startswith("module/") else ""
+if not clients.valid_module_id(module_id):
+    clients.report(clients.ClientError("invalid_module_id", "module_id", module_id))
+try:
+    output = clients.client_status(module_id)
+except clients.ClientError as ex:
+    clients.report(ex)
+json.dump(output, fp=sys.stdout)

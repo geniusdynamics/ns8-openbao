@@ -1,0 +1,33 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "request-client-access input",
+    "$id": "http://schema.nethserver.org/openbao/request-client-access-input.json",
+    "description": "Role secretsclient. Record an access request of the calling module, shown to the OpenBao administrator. It grants nothing",
+    "examples": [
+        {},
+        {
+            "groups": [
+                "kumomta-cluster"
+            ]
+        }
+    ],
+    "type": "object",
+    "required": [],
+    "properties": {
+        "database_engine": {
+            "type": "boolean"
+        },
+        "groups": {
+            "type": "array",
+            "maxItems": 8,
+            "uniqueItems": true,
+            "items": {
+                "type": "string",
+                "maxLength": 64,
+                "pattern": "^[a-z][a-z0-9-]{0,62}[a-z]$"
+            },
+            "description": "Groups the module asks to join; the administrator decides"
+        }
+    },
+    "additionalProperties": false
+}

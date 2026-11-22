@@ -7,6 +7,7 @@ import VueRouter from "vue-router";
 import Status from "../views/Status.vue";
 import Settings from "../views/Settings.vue";
 import Plugins from "../views/Plugins.vue";
+import Clients from "../views/Clients.vue";
 
 Vue.use(VueRouter);
 
@@ -26,6 +27,11 @@ const routes = [
     path: "/plugins",
     name: "Plugins",
     component: Plugins,
+  },
+  {
+    path: "/clients",
+    name: "Clients",
+    component: Clients,
   },
   {
     path: "/about",

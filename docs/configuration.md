@@ -56,6 +56,11 @@ Parameters:
 - `public_access`: publish the API and web UI through Traefik on `host`.
   `false` makes OpenBao reachable only on the cluster network API (requires
   `vpn_api`). Default `true`
+- `client_provisioning`: let approved NethServer modules get their own
+  scoped OpenBao token, see [Client provisioning](client-provisioning.md).
+  Enabling it also needs `openbao-client-provisioner create` on the node;
+  disabling revokes the client and provisioner tokens. Not allowed on an HA
+  member. Default `false`
 - `snapshot_keep`: daily Raft snapshots kept on the node, see
   [Snapshots and restore](operations.md#snapshots-and-restore). Default `0` (disabled)
 - `transit_address`, `transit_mount` (default `transit`), `transit_key`,
