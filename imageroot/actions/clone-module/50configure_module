@@ -41,6 +41,7 @@ request = {
     "starter_kits": openbao.starter_kits(env),
     "vpn_api": openbao.vpn_api_enabled(env),
     "public_access": openbao.public_access(env),
+    "client_provisioning": openbao.is_true(env["OPENBAO_CLIENT_PROVISIONING"]),
     "snapshot_keep": openbao.snapshot_keep(env),
     "transit_address": env["OPENBAO_TRANSIT_ADDRESS"],
     "transit_mount": env["OPENBAO_TRANSIT_MOUNT"],

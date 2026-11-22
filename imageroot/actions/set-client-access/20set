@@ -1,0 +1,28 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# Administrator action: approve or revoke a client module. The reader and
+# secretsclient roles cannot run it. An approval binds the module ID to
+# its current MODULE_UUID; group membership and the database secrets
+# engine are granted here only, never by the client.
+#
+
+import json
+import sys
+import openbao_clients as clients
+
+data = json.load(sys.stdin)
+try:
+    output = clients.set_access(
+        data["module_id"], data["allowed"],
+        database_engine=bool(data.get("database_engine", False)),
+        delete_data=bool(data.get("delete_data", False)),
+        groups=data.get("groups", []))
+except clients.ClientError as ex:
+    clients.report(ex)
+json.dump(output, fp=sys.stdout)

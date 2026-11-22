@@ -20,6 +20,14 @@ robot -v NODE_ADDR:<node address> -v IMAGE_URL:ghcr.io/geniusdynamics/openbao:<t
 | `40_openbao_transit.robot` | Transit unseal |
 | `50_openbao_ha.robot` | high availability: two instances join one Raft cluster on the same node |
 | `60_openbao_plugins.robot` | plugin catalog: install on demand, registration, removal |
+| `70_openbao_client_provisioning.robot` | client provisioning: a second instance as client module, request, approval, unwrap, scope, groups, revocation, disable |
+
+Unit tests of client provisioning run without a node, against a fake
+OpenBao HTTP API:
+
+```bash
+python3 -m unittest discover -s tests/unit
+```
 
 ## UI translation
 

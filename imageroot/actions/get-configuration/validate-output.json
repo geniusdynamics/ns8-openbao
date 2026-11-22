@@ -45,6 +45,8 @@
             ],
             "vpn_api": false,
             "vpn_api_url": "",
+            "client_provisioning": false,
+            "client_provisioner_set": false,
             "transit_address": "",
             "transit_mount": "transit",
             "transit_key": "",
@@ -80,6 +82,8 @@
         "builtin_policies",
         "vpn_api",
         "vpn_api_url",
+        "client_provisioning",
+        "client_provisioner_set",
         "transit_address",
         "transit_mount",
         "transit_key",
@@ -259,6 +263,14 @@
         },
         "vpn_api": {
             "type": "boolean"
+        },
+        "client_provisioning": {
+            "type": "boolean",
+            "description": "Client provisioning is enabled"
+        },
+        "client_provisioner_set": {
+            "type": "boolean",
+            "description": "The provisioner token exists on the node (openbao-client-provisioner create was run)"
         },
         "vpn_api_url": {
             "type": "string",

@@ -59,6 +59,7 @@ if "starter_kits" in request:
 
 set_bool("OPENBAO_VPN_API", "vpn_api")
 set_bool("OPENBAO_PUBLIC_ACCESS", "public_access")
+set_bool("OPENBAO_CLIENT_PROVISIONING", "client_provisioning")
 if "snapshot_keep" in request:
     agent.set_env("OPENBAO_SNAPSHOT_KEEP", str(request["snapshot_keep"]))
 for field, var in [
@@ -104,6 +105,7 @@ elif role == "member":
         agent.set_env("OPENBAO_TRANSIT_KEY", target["transit_key"])
         agent.set_env("OPENBAO_TRANSIT_TLS_SKIP_VERIFY", str(target["transit_tls_skip_verify"]))
     agent.set_env("OPENBAO_AUTO_INITIALIZE", "False")
+    agent.set_env("OPENBAO_CLIENT_PROVISIONING", "False")
 else:
     if previous_role == "primary" and openbao.storage_state() == "initialized":
         # Move this node's Raft entry back to loopback (no members left)

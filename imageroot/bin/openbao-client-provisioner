@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# Manage the provisioner token of client provisioning: a periodic OpenBao
+# token with the narrow ns8-provisioner policy, kept on the node only. It
+# creates tokens of the ns8-client token role for approved client modules.
+#
+#   runagent -m openbao1 openbao-client-provisioner create   # needs an admin token
+#   runagent -m openbao1 openbao-client-provisioner status
+#   runagent -m openbao1 openbao-client-provisioner revoke
+#
+# Enable client provisioning in the settings first. "create" writes the
+# ns8-kv mount, the templated client policies and the ns8-client token
+# role, then the provisioner token. The administrator token is read from
+# BAO_TOKEN or prompted on the terminal, and is never stored. "revoke"
+# also revokes every token issued to client modules.
+#
+
+import getpass
+import os
+import sys
+import urllib.error
+import openbao_clients as clients
+
+action = sys.argv[1] if len(sys.argv) > 1 else "status"
+
+if action == "status":
+    print(clients.provisioner_status())
+    sys.exit(0)
+
+if action == "revoke":
+    token = clients.read_provisioner_token()
+    if token and not clients.enabled():
+        ok = clients.disable()
+    elif token:
+        sys.exit("Disable client provisioning in the settings: it revokes the client tokens too")
+    else:
+        ok = True
+    print("Provisioner token removed" if ok else "Revocation queued: OpenBao is not available")
+    sys.exit(0 if ok else 1)
+
+if action != "create":
+    sys.exit("Usage: openbao-client-provisioner create|status|revoke")
+
+admin_token = os.environ.get("BAO_TOKEN") or getpass.getpass("OpenBao administrator token: ")
+if not admin_token:
+    sys.exit("An OpenBao administrator token is required")
+try:
+    print(clients.setup_provisioner(admin_token))
+except clients.ClientError as ex:
+    messages = {
+        "client_provisioning_disabled": "Enable client provisioning in the settings first",
+        "client_provisioning_ha_member": "Enable client provisioning on the primary instance, not on a member",
+        "openbao_unavailable": f"OpenBao is not available ({ex.value})",
+    }
+    sys.exit(messages.get(ex.error, ex.error))
+except urllib.error.HTTPError as ex:
+    # The error body is not printed: keep the output free of request data
+    sys.exit(f"Cannot set up client provisioning: HTTP {ex.code} (is the token an administrator token?)")
+except (urllib.error.URLError, OSError) as ex:
+    sys.exit(f"Cannot reach OpenBao: {type(ex).__name__}")
+except RuntimeError as ex:
+    sys.exit(f"Cannot set up client provisioning: {ex}")

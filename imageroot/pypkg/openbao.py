@@ -74,6 +74,7 @@ DEFAULTS = {
     "OPENBAO_RAFT_NODE_ID": "",
     "OPENBAO_RAFT_RECOVER": "False",
     "OPENBAO_PLUGINS": "",
+    "OPENBAO_CLIENT_PROVISIONING": "False",
 }
 
 # High availability (experimental): "standalone" is a single-node Raft
@@ -1594,14 +1595,15 @@ def _opener():
     return urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
-def api_request(path, method="GET", data=None, token=None, timeout=10):
+def api_request(path, method="GET", data=None, token=None, timeout=10, headers=None):
     """Call the OpenBao API on the local listener. Return the decoded JSON.
 
+    Extra request headers, such as X-Vault-Wrap-TTL, go in headers.
     Raises urllib.error.HTTPError on API errors.
     """
     url = f"http://127.0.0.1:{os.environ['TCP_PORT']}/v1/" + \
         urllib.parse.quote(path.lstrip("/"), safe="/")
-    headers = {"Accept": "application/json"}
+    headers = dict(headers or {}, Accept="application/json")
     body = None
     if data is not None:
         body = json.dumps(data).encode()

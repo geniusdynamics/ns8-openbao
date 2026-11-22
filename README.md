@@ -26,6 +26,8 @@ The module runs OpenBao as a rootless container with:
   NethServer metrics module
 - a **setup wizard** for simple setups, and **high availability**
   (experimental) across nodes
+- optional **client provisioning**: approved NethServer modules get their
+  own narrowly scoped OpenBao token, without pasting an admin token
 
 ## Install
 
@@ -71,9 +73,29 @@ step by step, and what to do when credentials are lost.
 | [Plugins](docs/plugins.md) | the plugin catalog, how plugins are installed, enabling and configuring them in OpenBao |
 | [Cluster network and metrics](docs/networking.md) | the cluster network API, VPN-only access, Prometheus metrics |
 | [Operations](docs/operations.md) | notifications, module token, snapshots, backup and restore, updates (including from 1.0.0), uninstall, troubleshooting |
+| [Client provisioning](docs/client-provisioning.md) | approved modules get their own scoped token: enabling, approvals, groups, the client contract, security model |
 | [High availability](docs/high-availability.md) | joining instances into a Raft cluster (experimental), design decisions and limits |
 | [Security](docs/security.md) | security notes, and what is deliberately not implemented |
 | [Development](docs/development.md) | tests and UI translation |
+
+## Client provisioning
+
+Off by default. When enabled, a module that declares the authorization
+`openbao@any:secretsclient` (for example PostgreSQL or KumoMTA) asks for
+access; the OpenBao administrator approves it on the **Client modules**
+page; the module then calls `provision-client` and receives a
+**response-wrapped**, single-use token that it unwraps at once. The token
+reaches only `ns8-kv/modules/<module id>/`, plus the shared groups and the
+database secrets engine (`ns8-db-<module id>/`) the administrator grants.
+
+```bash
+api-cli run module/openbao1/configure-module --data '{"host": "vault.example.org", "client_provisioning": true}'
+runagent -m openbao1 openbao-client-provisioner create   # once, with an administrator token
+api-cli run module/openbao1/set-client-access --data '{"module_id": "postgresql1", "allowed": true}'
+```
+
+The client contract (actions, JSON, unwrap and renewal steps, errors) and
+the threat model are in [Client provisioning](docs/client-provisioning.md).
 
 ## Update
 
@@ -102,5 +124,7 @@ All the stored secrets are deleted, unless a backup exists.
   The container is rootless, with all capabilities dropped.
 - Revoke the root token after the initial setup, and enable the audit log
   in production.
+- Client provisioning hands out only response-wrapped tokens, confined by
+  static templated policies; the provisioner token cannot write policies.
 
 More in [Security](docs/security.md).

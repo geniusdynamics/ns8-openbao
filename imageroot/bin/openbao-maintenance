@@ -7,7 +7,8 @@
 
 #
 # Daily maintenance, run by openbao-maintenance.timer: renew the periodic
-# module token so it never expires, and take the scheduled snapshot.
+# module token so it never expires, take the scheduled snapshot, and keep
+# the client provisioning tokens in order.
 #
 
 import os
@@ -15,11 +16,22 @@ import sys
 import time
 import urllib.error
 import openbao
+import openbao_clients
 
 token = openbao.read_module_token()
 status = openbao.get_seal_status()
-if not token or not status or status.get("sealed"):
-    sys.exit(0)  # nothing to do, or retried at the next run
+if not status or status.get("sealed"):
+    sys.exit(0)  # retried at the next run
+
+# Client provisioning: renew the provisioner token, retry queued token
+# revocations and a pending disable
+try:
+    openbao_clients.maintenance()
+except Exception as ex:
+    print(f"<4>Client provisioning maintenance failed: {type(ex).__name__}", file=sys.stderr)
+
+if not token:
+    sys.exit(0)
 try:
     openbao.api_request("auth/token/renew-self", method="POST", data={}, token=token)
     print("Module token renewed", file=sys.stderr)
