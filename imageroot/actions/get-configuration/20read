@@ -11,6 +11,7 @@ import sys
 import agent
 import openbao
 import openbao_auth
+import openbao_clients
 
 env = openbao.read_environment()
 
@@ -42,6 +43,9 @@ config = {
     "builtin_policies": sorted(openbao.BUILTIN_POLICIES),
     "vpn_api": openbao.vpn_api_enabled(env),
     "public_access": openbao.public_access(env),
+    "client_provisioning": openbao_clients.enabled(env),
+    # Only whether the provisioner token exists: never the token
+    "client_provisioner_set": os.path.exists(openbao_clients.PROVISIONER_TOKEN_FILE),
     "snapshot_keep": openbao.snapshot_keep(env),
     "vpn_api_url": "http://{}:{}".format(*vpn) if vpn else "",
     "transit_address": env["OPENBAO_TRANSIT_ADDRESS"],

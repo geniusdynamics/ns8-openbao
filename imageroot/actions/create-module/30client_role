@@ -1,0 +1,16 @@
+#!/bin/bash
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+# Role "secretsclient": modules that declare the authorization
+# openbao@any:secretsclient may ask for their own OpenBao token (client
+# provisioning, off by default, every client approved by the
+# administrator). get-client-status is also readable by the builtin
+# reader role.
+
+set -e
+exec 1>&2
+redis-exec SADD "${AGENT_ID}/roles/secretsclient" "provision-client" "request-client-access" "get-client-status"

@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# Role secretsclient (authorization openbao@any:secretsclient): issue an
+# OpenBao token to the calling module, if the administrator approved it.
+# The caller is AGENT_TASK_USER, never an input field. The token is
+# response-wrapped (single use, short TTL): this output, kept by NS8 in
+# Redis, holds no usable credential once the client has unwrapped it.
+# See docs/client-provisioning.md.
+#
+
+import json
+import sys
+import openbao_clients as clients
+
+data = json.load(sys.stdin)
+try:
+    module_id = clients.caller_module()
+    output = clients.provision(module_id, bool(data.get("database_engine", False)))
+except clients.ClientError as ex:
+    clients.report(ex)
+json.dump(output, fp=sys.stdout)

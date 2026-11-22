@@ -1,0 +1,96 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "get-client-status output",
+    "$id": "http://schema.nethserver.org/openbao/get-client-status-output.json",
+    "description": "Client provisioning status of one module: no secrets",
+    "examples": [
+        {
+            "module_id": "kumomta1",
+            "openbao_module_id": "openbao1",
+            "client_provisioning": true,
+            "ready": true,
+            "status": "pending",
+            "database_engine": false,
+            "database_engine_requested": false,
+            "groups": [],
+            "groups_requested": [
+                "kumomta-cluster"
+            ],
+            "address": "http://10.5.4.1:20003",
+            "address_type": "vpn",
+            "kv_mount": "ns8-kv",
+            "kv_prefix": "modules/kumomta1"
+        }
+    ],
+    "type": "object",
+    "required": [
+        "module_id",
+        "openbao_module_id",
+        "client_provisioning",
+        "ready",
+        "status",
+        "database_engine",
+        "database_engine_requested",
+        "groups",
+        "groups_requested",
+        "address",
+        "address_type",
+        "kv_mount",
+        "kv_prefix"
+    ],
+    "properties": {
+        "module_id": {
+            "type": "string"
+        },
+        "openbao_module_id": {
+            "type": "string"
+        },
+        "client_provisioning": {
+            "type": "boolean"
+        },
+        "ready": {
+            "type": "boolean",
+            "description": "Provisioning is enabled, the provisioner token is valid and an address is available"
+        },
+        "status": {
+            "type": "string",
+            "enum": [
+                "none",
+                "pending",
+                "approved",
+                "stale"
+            ],
+            "description": "stale: approved for a previous installation with the same module ID"
+        },
+        "database_engine": {
+            "type": "boolean"
+        },
+        "database_engine_requested": {
+            "type": "boolean"
+        },
+        "groups": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            }
+        },
+        "groups_requested": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            }
+        },
+        "address": {
+            "type": "string"
+        },
+        "address_type": {
+            "type": "string"
+        },
+        "kv_mount": {
+            "type": "string"
+        },
+        "kv_prefix": {
+            "type": "string"
+        }
+    }
+}

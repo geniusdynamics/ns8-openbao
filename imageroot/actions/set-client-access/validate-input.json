@@ -1,0 +1,60 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "set-client-access input",
+    "$id": "http://schema.nethserver.org/openbao/set-client-access-input.json",
+    "description": "Approve or revoke a client module. An approval binds the module ID to its current MODULE_UUID",
+    "examples": [
+        {
+            "module_id": "postgresql19c1",
+            "allowed": true,
+            "database_engine": true
+        },
+        {
+            "module_id": "kumomta1",
+            "allowed": true,
+            "groups": [
+                "kumomta-cluster"
+            ]
+        },
+        {
+            "module_id": "kumomta1",
+            "allowed": false,
+            "delete_data": false
+        }
+    ],
+    "type": "object",
+    "required": [
+        "module_id",
+        "allowed"
+    ],
+    "properties": {
+        "module_id": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[a-z][a-z0-9-]{0,62}[0-9]$"
+        },
+        "allowed": {
+            "type": "boolean"
+        },
+        "database_engine": {
+            "type": "boolean",
+            "description": "Approve the database secrets engine mounted at ns8-db-<module id>/"
+        },
+        "groups": {
+            "type": "array",
+            "maxItems": 8,
+            "uniqueItems": true,
+            "items": {
+                "type": "string",
+                "maxLength": 64,
+                "pattern": "^[a-z][a-z0-9-]{0,62}[a-z]$"
+            },
+            "description": "Shared groups: KV prefix groups/<group id>/ of the ns8-kv mount. A group ID ends with a letter"
+        },
+        "delete_data": {
+            "type": "boolean",
+            "description": "On revoke: also delete the module KV prefix and its database secrets engine"
+        }
+    },
+    "additionalProperties": false
+}

@@ -186,6 +186,11 @@
                 ]
             }
         },
+        "client_provisioning": {
+            "type": "boolean",
+            "title": "Client provisioning",
+            "description": "Let approved NethServer modules get their own narrowly scoped OpenBao token (role openbao@any:secretsclient). Enabling it also needs openbao-client-provisioner create on the node; disabling revokes the client and provisioner tokens"
+        },
         "vpn_api": {
             "type": "boolean",
             "title": "Cluster network API",

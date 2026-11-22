@@ -1,0 +1,183 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "list-clients output",
+    "$id": "http://schema.nethserver.org/openbao/list-clients-output.json",
+    "description": "Client modules of the client provisioning feature: no tokens, no accessors",
+    "examples": [
+        {
+            "client_provisioning": true,
+            "provisioner": "valid",
+            "ha_role": "standalone",
+            "kv_mount": "ns8-kv",
+            "token_role": "ns8-client",
+            "clients": [],
+            "groups": [],
+            "modules": [
+                "postgresql19c1"
+            ],
+            "audit": []
+        }
+    ],
+    "type": "object",
+    "required": [
+        "client_provisioning",
+        "provisioner",
+        "clients",
+        "groups",
+        "modules",
+        "audit"
+    ],
+    "properties": {
+        "client_provisioning": {
+            "type": "boolean"
+        },
+        "provisioner": {
+            "type": "string",
+            "enum": [
+                "missing",
+                "valid",
+                "invalid",
+                "unknown",
+                "revoke_pending"
+            ]
+        },
+        "ha_role": {
+            "type": "string"
+        },
+        "kv_mount": {
+            "type": "string"
+        },
+        "token_role": {
+            "type": "string"
+        },
+        "clients": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": [
+                    "module_id",
+                    "module_uuid",
+                    "installed",
+                    "status",
+                    "database_engine",
+                    "database_engine_requested",
+                    "groups",
+                    "groups_requested",
+                    "approved_at",
+                    "requested_at",
+                    "tokens",
+                    "last_issued_at",
+                    "cleanup_pending"
+                ],
+                "properties": {
+                    "module_id": {
+                        "type": "string"
+                    },
+                    "module_uuid": {
+                        "type": "string"
+                    },
+                    "installed": {
+                        "type": "boolean"
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": [
+                            "approved",
+                            "pending",
+                            "stale",
+                            "cleanup_pending"
+                        ]
+                    },
+                    "database_engine": {
+                        "type": "boolean"
+                    },
+                    "database_engine_requested": {
+                        "type": "boolean"
+                    },
+                    "groups": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "groups_requested": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "approved_at": {
+                        "type": "integer"
+                    },
+                    "requested_at": {
+                        "type": "integer"
+                    },
+                    "tokens": {
+                        "type": "integer",
+                        "description": "Tokens issued and not past their maximum TTL"
+                    },
+                    "last_issued_at": {
+                        "type": "integer"
+                    },
+                    "cleanup_pending": {
+                        "type": "boolean"
+                    }
+                }
+            }
+        },
+        "groups": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": [
+                    "group_id",
+                    "kv_prefix",
+                    "members"
+                ],
+                "properties": {
+                    "group_id": {
+                        "type": "string"
+                    },
+                    "kv_prefix": {
+                        "type": "string"
+                    },
+                    "members": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "modules": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "description": "Other modules of the cluster, candidates for approval"
+        },
+        "audit": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": [
+                    "time",
+                    "event",
+                    "module_id"
+                ],
+                "properties": {
+                    "time": {
+                        "type": "integer"
+                    },
+                    "event": {
+                        "type": "string"
+                    },
+                    "module_id": {
+                        "type": "string"
+                    }
+                }
+            }
+        }
+    }
+}

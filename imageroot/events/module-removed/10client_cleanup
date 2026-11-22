@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# A module was removed from the cluster: forget its client approval and
+# revoke the OpenBao tokens issued to it. Its key/value data and database
+# secrets engine are kept; the administrator deletes them with
+# set-client-access {"allowed": false, "delete_data": true}.
+#
+
+import json
+import os
+import sys
+import openbao_clients as clients
+
+event = json.load(sys.stdin)
+removed = event.get("module") or event.get("module_id") or ""
+if not removed or removed == os.environ.get("MODULE_ID"):
+    sys.exit(0)
+try:
+    clients.module_removed(removed)
+except Exception as ex:
+    print(f"<4>Client cleanup of {removed} failed: {type(ex).__name__}", file=sys.stderr)

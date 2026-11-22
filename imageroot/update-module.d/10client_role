@@ -1,0 +1,22 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+# Upgrade from a release without client provisioning: define the
+# secretsclient role (create-module does it for new installs). NS8 grants
+# openbao@any:secretsclient to the modules that declare it when a module
+# is added or the core is updated.
+
+import os
+import sys
+import agent
+
+try:
+    with agent.redis_connect(privileged=True) as prdb:
+        prdb.sadd(f"{os.environ['AGENT_ID']}/roles/secretsclient",
+                  "provision-client", "request-client-access", "get-client-status")
+except Exception as ex:
+    print(agent.SD_WARNING + f"Cannot define the secretsclient role: {ex}", file=sys.stderr)

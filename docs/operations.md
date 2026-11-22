@@ -35,6 +35,11 @@ configuration or revoke anything. It is renewed daily by
   taken without stopping OpenBao (in all unseal modes)
 - the *Status* page warns when a **root token** is still active
 
+The same timer renews the **provisioner token** of
+[client provisioning](client-provisioning.md) (`state/openbao-provisioner.token`,
+narrow `ns8-provisioner` policy) and retries client token revocations that
+could not run while OpenBao was sealed.
+
 Self-initialization creates it automatically. For other instances, create
 it once with an administrator token:
 

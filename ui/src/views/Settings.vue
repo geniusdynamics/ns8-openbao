@@ -556,6 +556,83 @@
                 >{{ snapshotRestoreCommand }}</NsCodeSnippet
               >
             </div>
+            <!-- client provisioning -->
+            <h4 class="section-title">{{ $t("settings.section_clients") }}</h4>
+            <p class="section-description">
+              {{ $t("settings.client_provisioning_description") }}
+            </p>
+            <NsToggle
+              value="clientProvisioning"
+              :label="$t('settings.client_provisioning')"
+              v-model="isClientProvisioningEnabled"
+              :disabled="isFormDisabled || haRole === 'member'"
+              class="mg-bottom"
+              ref="client_provisioning"
+            >
+              <template slot="tooltip">{{
+                $t("settings.client_provisioning_helper")
+              }}</template>
+              <template slot="text-left">{{
+                $t("settings.disabled")
+              }}</template>
+              <template slot="text-right">{{
+                $t("settings.enabled")
+              }}</template>
+            </NsToggle>
+            <NsInlineNotification
+              v-if="error.client_provisioning"
+              kind="error"
+              :title="$t('settings.client_provisioning')"
+              :description="error.client_provisioning"
+              :showCloseButton="false"
+              class="maxwidth"
+            />
+            <template
+              v-if="
+                isClientProvisioningEnabled &&
+                !(savedConfig && savedConfig.client_provisioner_set)
+              "
+            >
+              <NsInlineNotification
+                kind="info"
+                :title="$t('settings.client_provisioner_missing_title')"
+                :description="
+                  $t('settings.client_provisioner_missing_description')
+                "
+                :showCloseButton="false"
+                class="maxwidth"
+              />
+              <NsCodeSnippet
+                :copyTooltip="$t('settings.copy_to_clipboard')"
+                :copy-feedback="$t('settings.copied_to_clipboard')"
+                :feedback-aria-label="$t('settings.copied_to_clipboard')"
+                hideExpandButton
+                class="mg-bottom maxwidth"
+                >{{ clientProvisionerCommand }}</NsCodeSnippet
+              >
+            </template>
+            <NsInlineNotification
+              v-if="
+                !isClientProvisioningEnabled &&
+                savedConfig &&
+                savedConfig.client_provisioning
+              "
+              kind="warning"
+              :title="$t('settings.client_provisioning_off_title')"
+              :description="$t('settings.client_provisioning_off_description')"
+              :showCloseButton="false"
+              class="maxwidth"
+            />
+            <NsButton
+              v-if="savedConfig && savedConfig.client_provisioning"
+              kind="ghost"
+              size="field"
+              type="button"
+              :icon="ArrowRight20"
+              class="mg-bottom"
+              @click="goToAppPage(instanceName, 'clients')"
+              >{{ $t("settings.manage_clients") }}</NsButton
+            >
             <!-- high availability -->
             <h4 class="section-title">{{ $t("settings.section_ha") }}</h4>
             <p class="section-description">
@@ -830,6 +907,7 @@ export default {
       starterKitList: ["kv", "pki", "approle"],
       isVpnApiEnabled: false,
       isPublicAccessEnabled: true,
+      isClientProvisioningEnabled: false,
       snapshotKeep: 0,
       snapshotInfo: null,
       transitAddress: "",
@@ -870,6 +948,7 @@ export default {
         transit_key: "",
         vpn_api: "",
         public_access: "",
+        client_provisioning: "",
         snapshot_keep: "",
         ha_role: "",
         ha_join: "",
@@ -985,6 +1064,9 @@ export default {
       return this.groupPolicies
         .filter((row) => row.group && row.policy)
         .map((row) => ({ group: row.group.trim(), policy: row.policy.trim() }));
+    },
+    clientProvisionerCommand() {
+      return `runagent -m ${this.instanceName} openbao-client-provisioner create`;
     },
     moduleTokenCommand() {
       return `runagent -m ${this.instanceName} openbao-module-token create`;
@@ -1130,6 +1212,7 @@ export default {
       this.ipAllowlistText = config.ip_allowlist.join("\n");
       this.isVpnApiEnabled = config.vpn_api;
       this.isPublicAccessEnabled = config.public_access;
+      this.isClientProvisioningEnabled = !!config.client_provisioning;
       this.snapshotKeep = config.snapshot_keep;
       this.transitAddress = config.transit_address;
       this.transitMount = config.transit_mount || "transit";
@@ -1400,6 +1483,8 @@ export default {
             starter_kits: this.starterKits,
             vpn_api: this.isVpnApiEnabled,
             public_access: this.isPublicAccessEnabled,
+            client_provisioning:
+              this.haRole !== "member" && this.isClientProvisioningEnabled,
             snapshot_keep: Number(this.snapshotKeep) || 0,
             transit_address: this.transitAddress,
             transit_mount: this.transitMount,
